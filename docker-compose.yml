@@ -1,0 +1,39 @@
+name: idem-engine
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: idem-engine-postgres
+    environment:
+      POSTGRES_USER: idem
+      POSTGRES_PASSWORD: idem
+      POSTGRES_DB: idem
+    ports:
+      # Host port 5433: evita colisión con un postgres local en 5432
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U idem -d idem']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: idem-engine-redis
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
