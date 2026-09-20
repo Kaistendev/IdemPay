@@ -2,61 +2,76 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import { IdempotencyGuard } from './idempotency.guard';
 import type { IdempotencyRequest } from './idempotency.context';
+import type { IdempotencyKeyLock } from './idempotency.lock';
+import type { IdempotencyRepository } from './idempotency.repository';
 import type {
-  BeginIdempotencyResult,
-  IdempotencyRecord,
+  IdempotencyRegistration,
   IdempotencySettlement,
-  IdempotencyStorePort,
 } from './idempotency.types';
 
-const CREATED_AT = '2026-09-17T00:00:00.000Z';
+interface FakeRow {
+  key: string;
+  payloadHash: string;
+  generation: number;
+  status: 'PROCESSING' | 'SETTLED';
+  response: { statusCode: number; body: unknown } | null;
+  billingIntentId: string | null;
+}
 
-class FakeIdempotencyStore implements IdempotencyStorePort {
-  private readonly records = new Map<string, IdempotencyRecord>();
+class FakeRepository {
+  private readonly rows = new Map<string, FakeRow>();
 
-  begin(key: string, payloadHash: string): Promise<BeginIdempotencyResult> {
-    const existing = this.records.get(key);
-    if (existing) {
-      return Promise.resolve({ acquired: false, record: existing });
-    }
-    const record: IdempotencyRecord = {
-      key,
-      payloadHash,
-      state: 'PROCESSING',
-      response: null,
-      billingIntentRef: null,
-      createdAt: CREATED_AT,
-      settledAt: null,
-    };
-    this.records.set(key, record);
-    return Promise.resolve({ acquired: true, record });
-  }
-
-  settle(
+  registerOrGet(
     key: string,
-    settlement: IdempotencySettlement,
-  ): Promise<IdempotencyRecord | null> {
-    const existing = this.records.get(key);
-    if (!existing || existing.state !== 'PROCESSING') {
-      return Promise.resolve(null);
+    payloadHash: string,
+  ): Promise<IdempotencyRegistration> {
+    const existing = this.rows.get(key);
+    if (!existing) {
+      this.rows.set(key, {
+        key,
+        payloadHash,
+        generation: 1,
+        status: 'PROCESSING',
+        response: null,
+        billingIntentId: null,
+      });
+      return Promise.resolve({ outcome: 'NEW', generation: 1 });
     }
-    const updated: IdempotencyRecord = {
+    if (existing.payloadHash !== payloadHash) {
+      return Promise.resolve({
+        outcome: 'MISMATCH',
+        storedPayloadHash: existing.payloadHash,
+      });
+    }
+    if (existing.status === 'SETTLED') {
+      return Promise.resolve({
+        outcome: 'REPLAY',
+        response: existing.response ?? { statusCode: 0, body: null },
+        billingIntentId: existing.billingIntentId,
+      });
+    }
+    return Promise.resolve({
+      outcome: 'IN_FLIGHT',
+      leaseRemainingSeconds: 300,
+    });
+  }
+
+  settle(key: string, settlement: IdempotencySettlement): Promise<boolean> {
+    const existing = this.rows.get(key);
+    if (!existing || existing.status !== 'PROCESSING') {
+      return Promise.resolve(false);
+    }
+    this.rows.set(key, {
       ...existing,
-      state: 'SETTLED',
+      status: 'SETTLED',
       response: settlement.response,
-      billingIntentRef: settlement.billingIntentRef,
-      settledAt: CREATED_AT,
-    };
-    this.records.set(key, updated);
-    return Promise.resolve(updated);
+      billingIntentId: settlement.billingIntentRef,
+    });
+    return Promise.resolve(true);
   }
 
-  read(key: string): Promise<IdempotencyRecord | null> {
-    return Promise.resolve(this.records.get(key) ?? null);
-  }
-
-  ttlMillis(): Promise<number> {
-    return Promise.resolve(86_400_000);
+  read(key: string): Promise<FakeRow | null> {
+    return Promise.resolve(this.rows.get(key) ?? null);
   }
 }
 
@@ -67,11 +82,16 @@ function buildRequest(
   return { headers, body } as unknown as IdempotencyRequest;
 }
 
-function buildContext(request: IdempotencyRequest): ExecutionContext {
+function buildContext(
+  request: IdempotencyRequest,
+  response: { setHeader: (name: string, value: string) => void } = {
+    setHeader: () => undefined,
+  },
+): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => request,
-      getResponse: () => ({}),
+      getResponse: () => response,
       getNext: () => undefined,
     }),
   } as unknown as ExecutionContext;
@@ -94,12 +114,17 @@ async function captureHttpError(
 describe('IdempotencyGuard', () => {
   const key = 'operation-1';
   const body = { amount: 100, currency: 'USD' };
-  let store: FakeIdempotencyStore;
+  let repository: FakeRepository;
   let guard: IdempotencyGuard;
 
   beforeEach(() => {
-    store = new FakeIdempotencyStore();
-    guard = new IdempotencyGuard(store);
+    repository = new FakeRepository();
+    guard = new IdempotencyGuard(
+      repository as unknown as IdempotencyRepository,
+      {
+        acquire: () => Promise.resolve(true),
+      } as unknown as IdempotencyKeyLock,
+    );
   });
 
   it('accepts a keyed request and registers it as PROCESSING', async () => {
@@ -110,10 +135,11 @@ describe('IdempotencyGuard', () => {
     expect(request.idempotencyOperationContext).toMatchObject({
       key,
       acquired: true,
+      generation: 1,
       replay: null,
     });
-    const record = await store.read(key);
-    expect(record?.state).toBe('PROCESSING');
+    const record = await repository.read(key);
+    expect(record?.status).toBe('PROCESSING');
   });
 
   it('rejects a missing key with 400', async () => {
@@ -177,14 +203,20 @@ describe('IdempotencyGuard', () => {
     });
   });
 
-  it('rejects an in-flight key with 423', async () => {
+  it('rejects an in-flight key with 423 and Retry-After', async () => {
     await guard.canActivate(
       buildContext(buildRequest({ 'idempotency-key': key }, body)),
     );
 
+    const headers = new Map<string, string>();
+    const response = {
+      setHeader(name: string, value: string): void {
+        headers.set(name, value);
+      },
+    };
     const error = await captureHttpError(
       guard.canActivate(
-        buildContext(buildRequest({ 'idempotency-key': key }, body)),
+        buildContext(buildRequest({ 'idempotency-key': key }, body), response),
       ),
     );
 
@@ -193,13 +225,14 @@ describe('IdempotencyGuard', () => {
       error: 'IDEMPOTENCY_LOCKED',
       status: 'PROCESSING',
     });
+    expect(headers.get('Retry-After')).toBe('300');
   });
 
   it('exposes the settled response for a duplicate payload', async () => {
     await guard.canActivate(
       buildContext(buildRequest({ 'idempotency-key': key }, body)),
     );
-    await store.settle(key, {
+    await repository.settle(key, {
       response: { statusCode: 201, body: { id: 'bi-1' } },
       billingIntentRef: 'bi-1',
     });
@@ -210,6 +243,8 @@ describe('IdempotencyGuard', () => {
 
     expect(replay.idempotencyOperationContext).toMatchObject({
       acquired: false,
+      generation: null,
+      billingIntentRef: 'bi-1',
       replay: { statusCode: 201, body: { id: 'bi-1' } },
     });
   });
@@ -223,7 +258,7 @@ describe('IdempotencyGuard', () => {
         ),
       ),
     );
-    await store.settle(key, {
+    await repository.settle(key, {
       response: { statusCode: 201, body: { id: 'bi-1' } },
       billingIntentRef: 'bi-1',
     });
@@ -252,6 +287,6 @@ describe('IdempotencyGuard', () => {
       ),
     ).resolves.toBe(true);
 
-    expect(await store.read('key-a ')).not.toBeNull();
+    expect(await repository.read('key-a ')).not.toBeNull();
   });
 });

@@ -22,11 +22,11 @@ export class ChargesController {
   @Post()
   @UseGuards(IdempotencyGuard)
   @UseInterceptors(IdempotencySettlementInterceptor)
-  create(
+  async create(
     @Body(new ZodValidationPipe(chargeSchema)) body: ChargeRequest,
     @IdempotencyContext() context: IdempotencyOperationContext,
-  ): ChargeResult {
-    const result = this.charges.create(body);
+  ): Promise<ChargeResult> {
+    const result = await Promise.resolve(this.charges.create(body));
     context.billingIntentRef = result.id;
     return result;
   }

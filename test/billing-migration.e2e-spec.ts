@@ -14,11 +14,14 @@ interface IntentInput {
   status: string;
   origin_idempotency_key: string | null;
   settled_at: string | null;
+  omitted_reason: string | null;
+  next_attempt_at: string | null;
 }
 
 interface AttemptInput {
   billing_intent_id: string;
-  attempt_no: number;
+  trigger: 'AUTO' | 'MANUAL';
+  auto_seq: number | null;
   provider_operation_id: string;
   status: string;
   error_type: string | null;
@@ -74,13 +77,15 @@ describe('billing intents migration (e2e)', () => {
       status: 'SCHEDULED',
       origin_idempotency_key: null,
       settled_at: null,
+      omitted_reason: null,
+      next_attempt_at: null,
       ...overrides,
     };
     return pool.query<{ id: string }>(
       `INSERT INTO billing_intents
          (subscription_id, billing_cycle, schedule_date, amount, currency,
-          status, origin_idempotency_key, settled_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          status, origin_idempotency_key, settled_at, omitted_reason, next_attempt_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
         input.subscription_id,
@@ -91,6 +96,8 @@ describe('billing intents migration (e2e)', () => {
         input.status,
         input.origin_idempotency_key,
         input.settled_at,
+        input.omitted_reason,
+        input.next_attempt_at,
       ],
     );
   };
@@ -101,7 +108,8 @@ describe('billing intents migration (e2e)', () => {
   ) => {
     const input: AttemptInput = {
       billing_intent_id: intentId,
-      attempt_no: 1,
+      trigger: 'AUTO',
+      auto_seq: 1,
       provider_operation_id: nextProviderOperation(),
       status: 'IN_FLIGHT',
       error_type: null,
@@ -110,13 +118,14 @@ describe('billing intents migration (e2e)', () => {
     };
     return pool.query<{ id: string }>(
       `INSERT INTO payment_attempts
-         (billing_intent_id, attempt_no, provider_operation_id, status,
+         (billing_intent_id, trigger, auto_seq, provider_operation_id, status,
           error_type, finished_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         input.billing_intent_id,
-        input.attempt_no,
+        input.trigger,
+        input.auto_seq,
         input.provider_operation_id,
         input.status,
         input.error_type,
@@ -156,6 +165,7 @@ describe('billing intents migration (e2e)', () => {
       schedule_date: cycle,
       status: 'OMITTED',
       settled_at: settledAt,
+      omitted_reason: 'OVERLAP',
     });
 
     await expect(
@@ -175,7 +185,8 @@ describe('billing intents migration (e2e)', () => {
     );
 
     await pool.query(
-      `UPDATE billing_intents SET status = 'OMITTED', settled_at = now()
+      `UPDATE billing_intents
+       SET status = 'OMITTED', omitted_reason = 'OVERLAP', settled_at = now()
        WHERE id = $1`,
       [first.rows[0].id],
     );
@@ -184,40 +195,130 @@ describe('billing intents migration (e2e)', () => {
     expect(next.rows[0].id).toBeTruthy();
   });
 
-  it('enforces a unique attempt number per billing intent', async () => {
+  it('enforces a unique auto sequence per billing intent', async () => {
     const subscriptionId = await createSubscription();
     const intentId = (await insertIntent(subscriptionId)).rows[0].id;
 
-    await insertAttempt(intentId, { attempt_no: 1, status: 'IN_FLIGHT' });
+    await insertAttempt(intentId, {
+      trigger: 'AUTO',
+      auto_seq: 1,
+      status: 'IN_FLIGHT',
+    });
 
     await expect(
       insertAttempt(intentId, {
-        attempt_no: 1,
+        trigger: 'AUTO',
+        auto_seq: 1,
         status: 'FAILED',
         finished_at: settledAt,
       }),
-    ).rejects.toThrow(/payment_attempts_attempt_unique/);
+    ).rejects.toThrow(/payment_attempts_auto_seq_unique/);
   });
 
-  it('bounds attempt_no between 1 and 5', async () => {
+  it('bounds AUTO auto_seq between 1 and 5', async () => {
     const subscriptionId = await createSubscription();
     const intentId = (await insertIntent(subscriptionId)).rows[0].id;
 
     await expect(
       insertAttempt(intentId, {
-        attempt_no: 0,
+        trigger: 'AUTO',
+        auto_seq: 0,
         status: 'FAILED',
         finished_at: settledAt,
       }),
-    ).rejects.toThrow(/payment_attempts_attempt_no_check/);
+    ).rejects.toThrow(/payment_attempts_auto_seq_check/);
 
     await expect(
       insertAttempt(intentId, {
-        attempt_no: 6,
+        trigger: 'AUTO',
+        auto_seq: 6,
         status: 'FAILED',
         finished_at: settledAt,
       }),
-    ).rejects.toThrow(/payment_attempts_attempt_no_check/);
+    ).rejects.toThrow(/payment_attempts_auto_seq_check/);
+  });
+
+  it('keeps MANUAL attempts free of auto_seq and AUTO attempts bound to it', async () => {
+    const subscriptionId = await createSubscription();
+    const intentId = (await insertIntent(subscriptionId)).rows[0].id;
+
+    await expect(
+      insertAttempt(intentId, {
+        trigger: 'MANUAL',
+        auto_seq: 1,
+        status: 'FAILED',
+        finished_at: settledAt,
+      }),
+    ).rejects.toThrow(/payment_attempts_auto_seq_check/);
+
+    await expect(
+      insertAttempt(intentId, {
+        trigger: 'AUTO',
+        auto_seq: null,
+        status: 'FAILED',
+        finished_at: settledAt,
+      }),
+    ).rejects.toThrow(/payment_attempts_auto_seq_check/);
+
+    const manual = await insertAttempt(intentId, {
+      trigger: 'MANUAL',
+      auto_seq: null,
+      status: 'FAILED',
+      finished_at: settledAt,
+    });
+    expect(manual.rows[0].id).toBeTruthy();
+  });
+
+  it('accepts a sixth attempt when it is MANUAL', async () => {
+    const subscriptionId = await createSubscription();
+    const intentId = (await insertIntent(subscriptionId)).rows[0].id;
+
+    for (let autoSeq = 1; autoSeq <= 5; autoSeq += 1) {
+      await insertAttempt(intentId, {
+        trigger: 'AUTO',
+        auto_seq: autoSeq,
+        status: 'FAILED',
+        finished_at: settledAt,
+      });
+    }
+
+    const manual = await insertAttempt(intentId, {
+      trigger: 'MANUAL',
+      auto_seq: null,
+      status: 'FAILED',
+      finished_at: settledAt,
+    });
+    expect(manual.rows[0].id).toBeTruthy();
+
+    const { rows } = await pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count
+       FROM payment_attempts WHERE billing_intent_id = $1`,
+      [intentId],
+    );
+    expect(rows[0].count).toBe(6);
+  });
+
+  it('rejects a sixth AUTO attempt', async () => {
+    const subscriptionId = await createSubscription();
+    const intentId = (await insertIntent(subscriptionId)).rows[0].id;
+
+    for (let autoSeq = 1; autoSeq <= 5; autoSeq += 1) {
+      await insertAttempt(intentId, {
+        trigger: 'AUTO',
+        auto_seq: autoSeq,
+        status: 'FAILED',
+        finished_at: settledAt,
+      });
+    }
+
+    await expect(
+      insertAttempt(intentId, {
+        trigger: 'AUTO',
+        auto_seq: 6,
+        status: 'FAILED',
+        finished_at: settledAt,
+      }),
+    ).rejects.toThrow(/payment_attempts_auto_seq_check/);
   });
 
   it('enforces a globally unique provider operation id', async () => {
@@ -242,10 +343,18 @@ describe('billing intents migration (e2e)', () => {
     const subscriptionId = await createSubscription();
     const intentId = (await insertIntent(subscriptionId)).rows[0].id;
 
-    await insertAttempt(intentId, { attempt_no: 1, status: 'IN_FLIGHT' });
+    await insertAttempt(intentId, {
+      trigger: 'AUTO',
+      auto_seq: 1,
+      status: 'IN_FLIGHT',
+    });
 
     await expect(
-      insertAttempt(intentId, { attempt_no: 2, status: 'IN_FLIGHT' }),
+      insertAttempt(intentId, {
+        trigger: 'AUTO',
+        auto_seq: 2,
+        status: 'IN_FLIGHT',
+      }),
     ).rejects.toThrow(/payment_attempts_in_flight_unique/);
   });
 
@@ -254,14 +363,16 @@ describe('billing intents migration (e2e)', () => {
     const intentId = (await insertIntent(subscriptionId)).rows[0].id;
 
     await insertAttempt(intentId, {
-      attempt_no: 1,
+      trigger: 'AUTO',
+      auto_seq: 1,
       status: 'SUCCEEDED',
       finished_at: settledAt,
     });
 
     await expect(
       insertAttempt(intentId, {
-        attempt_no: 2,
+        trigger: 'AUTO',
+        auto_seq: 2,
         status: 'SUCCEEDED',
         finished_at: settledAt,
       }),
@@ -383,5 +494,127 @@ describe('billing intents migration (e2e)', () => {
         [attemptId],
       ),
     ).rejects.toThrow(/immutable/);
+  });
+
+  it('keeps the payment attempt trigger and auto_seq immutable', async () => {
+    const subscriptionId = await createSubscription();
+    const intentId = (await insertIntent(subscriptionId)).rows[0].id;
+    const attemptId = (await insertAttempt(intentId)).rows[0].id;
+
+    await expect(
+      pool.query(
+        `UPDATE payment_attempts SET trigger = 'MANUAL' WHERE id = $1`,
+        [attemptId],
+      ),
+    ).rejects.toThrow(/immutable/);
+    await expect(
+      pool.query(`UPDATE payment_attempts SET auto_seq = 9 WHERE id = $1`, [
+        attemptId,
+      ]),
+    ).rejects.toThrow(/immutable/);
+  });
+
+  it('accepts RETRY_PENDING and exposes the new scheduling fields', async () => {
+    const subscriptionId = await createSubscription();
+    const intentId = (
+      await insertIntent(subscriptionId, {
+        status: 'RETRY_PENDING',
+        next_attempt_at: '2026-03-02T10:00:00Z',
+      })
+    ).rows[0].id;
+
+    const { rows } = await pool.query<{
+      status: string;
+      next_attempt_at: Date | null;
+      omitted_reason: string | null;
+      unknown_since: Date | null;
+      verify_count: number;
+      next_verify_at: Date | null;
+      needs_manual_review: boolean;
+    }>(
+      `SELECT status, next_attempt_at, omitted_reason, unknown_since,
+              verify_count, next_verify_at, needs_manual_review
+       FROM billing_intents WHERE id = $1`,
+      [intentId],
+    );
+
+    expect(rows[0]).toMatchObject({
+      status: 'RETRY_PENDING',
+      omitted_reason: null,
+      unknown_since: null,
+      verify_count: 0,
+      next_verify_at: null,
+      needs_manual_review: false,
+    });
+    expect(rows[0].next_attempt_at).toBeInstanceOf(Date);
+  });
+
+  it('requires next_attempt_at only for RETRY_PENDING', async () => {
+    const subscriptionId = await createSubscription();
+
+    await expect(
+      insertIntent(subscriptionId, { status: 'RETRY_PENDING' }),
+    ).rejects.toThrow(/billing_intents_retry_pending_has_deadline/);
+
+    const scheduled = await insertIntent(subscriptionId, {
+      status: 'SCHEDULED',
+      next_attempt_at: '2026-04-01T10:00:00Z',
+    });
+    expect(scheduled.rows[0].id).toBeTruthy();
+  });
+
+  it('requires omitted_reason on OMITTED and rejects invalid reasons', async () => {
+    const subscriptionId = await createSubscription();
+
+    await expect(
+      insertIntent(subscriptionId, {
+        status: 'OMITTED',
+        settled_at: settledAt,
+      }),
+    ).rejects.toThrow(/billing_intents_omitted_reason_required/);
+
+    await expect(
+      insertIntent(subscriptionId, {
+        status: 'OMITTED',
+        settled_at: settledAt,
+        omitted_reason: 'UNKNOWN',
+      }),
+    ).rejects.toThrow(/billing_intents_omitted_reason_valid/);
+
+    await expect(
+      insertIntent(subscriptionId, {
+        status: 'SCHEDULED',
+        omitted_reason: 'OVERLAP',
+      }),
+    ).rejects.toThrow(/billing_intents_omitted_reason_required/);
+
+    const omitted = await insertIntent(subscriptionId, {
+      status: 'OMITTED',
+      settled_at: settledAt,
+      omitted_reason: 'SUBSCRIPTION_CANCELLED',
+    });
+    expect(omitted.rows[0].id).toBeTruthy();
+  });
+
+  it('treats RETRY_PENDING as a live state for cycle overlap', async () => {
+    const subscriptionId = await createSubscription();
+    const first = await insertIntent(subscriptionId, {
+      status: 'RETRY_PENDING',
+      next_attempt_at: '2026-03-02T10:00:00Z',
+    });
+
+    await expect(insertIntent(subscriptionId)).rejects.toThrow(
+      /billing_intents_live_unique/,
+    );
+
+    await pool.query(
+      `UPDATE billing_intents
+       SET status = 'OMITTED', omitted_reason = 'OVERLAP', settled_at = now()
+       WHERE id = $1`,
+      [first.rows[0].id],
+    );
+
+    const next = await insertIntent(subscriptionId);
+    expect(next.rows[0].id).toBeTruthy();
   });
 });

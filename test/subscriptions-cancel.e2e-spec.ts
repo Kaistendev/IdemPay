@@ -6,7 +6,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PG_POOL, REDIS_CLIENT } from '../src/health/health.constants';
-import { idempotencyRecordKey } from '../src/idempotency/idempotency.constants';
+import { idempotencyLockKey } from '../src/idempotency/idempotency.constants';
 import type { SubscriptionDetailResponse } from '../src/subscriptions/subscriptions.types';
 
 const isoDaysFromToday = (days: number): string => {
@@ -29,7 +29,7 @@ describe('subscriptions cancel (e2e)', () => {
   const nextKey = (): string => {
     keyCounter += 1;
     const key = `${runId}-${keyCounter}`;
-    createdKeys.push(idempotencyRecordKey(key));
+    createdKeys.push(idempotencyLockKey(key));
     return key;
   };
 
@@ -79,9 +79,9 @@ describe('subscriptions cancel (e2e)', () => {
   ): Promise<string> => {
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO payment_attempts
-         (billing_intent_id, attempt_no, provider_operation_id, status,
+         (billing_intent_id, trigger, auto_seq, provider_operation_id, status,
           error_type, finished_at)
-       VALUES ($1, $2, $3, $4, NULL, $5)
+       VALUES ($1, 'AUTO', $2, $3, $4, NULL, $5)
        RETURNING id`,
       [intentId, attemptNo, nextProviderOperation(), status, finishedAt],
     );

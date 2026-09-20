@@ -23,7 +23,9 @@ RETURNING cancelled_at AS "cancelledAt"
 
 const OMIT_PENDING_INTENTS = `
 UPDATE billing_intents
-SET status = 'OMITTED', settled_at = now()
+SET status = 'OMITTED',
+    omitted_reason = 'SUBSCRIPTION_CANCELLED',
+    settled_at = now()
 WHERE subscription_id = $1 AND status = 'SCHEDULED'
 `;
 

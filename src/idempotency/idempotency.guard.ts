@@ -3,51 +3,64 @@ import {
   ConflictException,
   HttpException,
   HttpStatus,
-  Inject,
   Injectable,
 } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
+import type { Response } from 'express';
 import { ErrorCode } from '../common/errors/error-code';
 import { hashCanonicalPayload } from '../common/idempotency/payload-hash';
-import {
-  IDEMPOTENCY_STORE,
-  MAX_IDEMPOTENCY_KEY_LENGTH,
-} from './idempotency.constants';
+import { MAX_IDEMPOTENCY_KEY_LENGTH } from './idempotency.constants';
 import type { IdempotencyRequest } from './idempotency.context';
-import type { IdempotencyStorePort } from './idempotency.types';
+import { IdempotencyKeyLock } from './idempotency.lock';
+import { IdempotencyRepository } from './idempotency.repository';
+import type { IdempotencyOperationType } from './idempotency.types';
 
 @Injectable()
 export class IdempotencyGuard implements CanActivate {
   constructor(
-    @Inject(IDEMPOTENCY_STORE) private readonly store: IdempotencyStorePort,
+    private readonly repository: IdempotencyRepository,
+    private readonly lock: IdempotencyKeyLock,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<IdempotencyRequest>();
     const key = this.readKey(request.headers['idempotency-key']);
     const payloadHash = hashCanonicalPayload(request.body ?? {});
+    const operationType = this.operationTypeFor(request);
 
-    const result = await this.store.begin(key, payloadHash);
+    await this.lock.acquire(key);
 
-    if (result.acquired) {
+    const registration = await this.repository.registerOrGet(
+      key,
+      payloadHash,
+      operationType,
+    );
+
+    if (registration.outcome === 'NEW' || registration.outcome === 'RETAKE') {
       request.idempotencyOperationContext = {
         key,
         payloadHash,
         acquired: true,
+        generation: registration.generation,
         billingIntentRef: null,
         replay: null,
       };
       return true;
     }
 
-    if (result.record.payloadHash !== payloadHash) {
+    if (registration.outcome === 'MISMATCH') {
       throw new ConflictException({
         error: ErrorCode.IdempotencyPayloadMismatch,
         message: 'Idempotency-Key was already used with a different payload',
       });
     }
 
-    if (result.record.state === 'PROCESSING') {
+    if (registration.outcome === 'IN_FLIGHT') {
+      const response = context.switchToHttp().getResponse<Response>();
+      response.setHeader(
+        'Retry-After',
+        String(registration.leaseRemainingSeconds),
+      );
       throw new HttpException(
         {
           error: ErrorCode.IdempotencyLocked,
@@ -62,8 +75,9 @@ export class IdempotencyGuard implements CanActivate {
       key,
       payloadHash,
       acquired: false,
-      billingIntentRef: null,
-      replay: result.record.response,
+      generation: null,
+      billingIntentRef: registration.billingIntentId,
+      replay: registration.response,
     };
     return true;
   }
@@ -88,5 +102,31 @@ export class IdempotencyGuard implements CanActivate {
     }
 
     return raw;
+  }
+
+  private operationTypeFor(
+    request: IdempotencyRequest,
+  ): IdempotencyOperationType {
+    const method = request.method ?? '';
+    if (method !== 'POST') {
+      return 'SUBSCRIPTION_CREATE';
+    }
+    const path = request.path ?? '';
+    if (/^\/subscriptions\/[^/]+\/pause$/.test(path)) {
+      return 'SUBSCRIPTION_PAUSE';
+    }
+    if (/^\/subscriptions\/[^/]+\/resume$/.test(path)) {
+      return 'SUBSCRIPTION_RESUME';
+    }
+    if (/^\/subscriptions\/[^/]+\/cancel$/.test(path)) {
+      return 'SUBSCRIPTION_CANCEL';
+    }
+    if (/^\/subscriptions\/[^/]+\/reprocess$/.test(path)) {
+      return 'BILLING_INTENT_REPROCESS';
+    }
+    if (/^\/charges$/.test(path)) {
+      return 'BILLING_CYCLE_CHARGE';
+    }
+    return 'SUBSCRIPTION_CREATE';
   }
 }

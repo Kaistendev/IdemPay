@@ -7,6 +7,7 @@ export interface IdempotencyOperationContext {
   key: string;
   payloadHash: string;
   acquired: boolean;
+  generation: number | null;
   billingIntentRef: string | null;
   replay: IdempotencyResponse | null;
 }

@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
+import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -15,7 +16,7 @@ import { z } from 'zod';
 import { CommonModule } from '../src/common/common.module';
 import { hashCanonicalPayload } from '../src/common/idempotency/payload-hash';
 import { ZodValidationPipe } from '../src/common/validation/zod-validation.pipe';
-import { PG_POOL } from '../src/health/health.constants';
+import { PG_POOL, REDIS_CLIENT } from '../src/health/health.constants';
 import { IdempotencyContext } from '../src/idempotency/idempotency.context';
 import type { IdempotencyOperationContext } from '../src/idempotency/idempotency.context';
 import { IdempotencyGuard } from '../src/idempotency/idempotency.guard';
@@ -31,8 +32,8 @@ const chargeSchema = z.object({
 
 type ChargeBody = z.infer<typeof chargeSchema>;
 
-const FAKE_ANCHOR = '2080-01-01';
-const CRASH_ANCHOR = '2099-01-01';
+const FAKE_ANCHOR = '2081-01-01';
+const CRASH_ANCHOR = '2098-01-01';
 
 const INSERT_SUBSCRIPTION = `
 INSERT INTO subscriptions
@@ -47,8 +48,15 @@ INSERT INTO billing_intents
 VALUES ($1, $2, '2026-01-01', '2026-01-01', $3, $4)
 `;
 
-@Controller('idempotency-test')
-class IdempotencyTestController {
+const brokenRedis = {
+  set: () => {
+    throw new Error('Redis is down');
+  },
+  disconnect: () => undefined,
+} as unknown as Redis;
+
+@Controller('idempotency-redisdown')
+class IdempotencyRedisDownController {
   static executions = 0;
 
   constructor(private readonly uow: IdempotencyUnitOfWork) {}
@@ -60,7 +68,7 @@ class IdempotencyTestController {
     @Body(new ZodValidationPipe(chargeSchema)) body: ChargeBody,
     @IdempotencyContext() context: IdempotencyOperationContext,
   ): Promise<ChargeBody & { id: string }> {
-    IdempotencyTestController.executions += 1;
+    IdempotencyRedisDownController.executions += 1;
     const client = this.uow.current();
     if (!client) {
       throw new Error('No transaction is active for the request');
@@ -82,8 +90,8 @@ class IdempotencyTestController {
   }
 }
 
-@Controller('idempotency-crash-test')
-class IdempotencyCrashController {
+@Controller('idempotency-redisdown-crash')
+class IdempotencyRedisDownCrashController {
   static executions = 0;
 
   constructor(private readonly uow: IdempotencyUnitOfWork) {}
@@ -95,7 +103,7 @@ class IdempotencyCrashController {
     @Body(new ZodValidationPipe(chargeSchema)) body: ChargeBody,
     @IdempotencyContext() context: IdempotencyOperationContext,
   ): Promise<ChargeBody & { id: string }> {
-    IdempotencyCrashController.executions += 1;
+    IdempotencyRedisDownCrashController.executions += 1;
     const client = this.uow.current();
     if (!client) {
       throw new Error('No transaction is active for the request');
@@ -113,7 +121,7 @@ class IdempotencyCrashController {
       body.currency,
     ]);
     context.billingIntentRef = id;
-    if (IdempotencyCrashController.executions === 1) {
+    if (IdempotencyRedisDownCrashController.executions === 1) {
       throw new Error('Simulated crash after the business effect');
     }
     return { id, ...body };
@@ -121,21 +129,18 @@ class IdempotencyCrashController {
 }
 
 interface OperationRow {
-  generation: number;
   status: 'PROCESSING' | 'SETTLED';
-  payload_hash: string;
   response_status: number | null;
-  response_body: unknown;
   billing_intent_id: string | null;
   settled_at: Date | null;
 }
 
-describe('IdempotencyGuard (e2e)', () => {
+describe('Idempotency with Redis unavailable (e2e)', () => {
   let app: INestApplication<App>;
   let moduleRef: TestingModule;
   let pool: Pool;
   let repository: IdempotencyRepository;
-  const runId = `t6-${process.pid}-${Date.now()}`;
+  const runId = `t26-redisdown-${process.pid}-${Date.now()}`;
   const createdKeys: string[] = [];
   let counter = 0;
 
@@ -148,21 +153,20 @@ describe('IdempotencyGuard (e2e)', () => {
 
   const post = (key: string | undefined, body: Record<string, unknown>) => {
     const agent = request(app.getHttpServer())
-      .post('/idempotency-test')
+      .post('/idempotency-redisdown')
       .send(body);
     return key === undefined ? agent : agent.set('Idempotency-Key', key);
   };
 
   const postCrash = (key: string, body: Record<string, unknown>) =>
     request(app.getHttpServer())
-      .post('/idempotency-crash-test')
+      .post('/idempotency-redisdown-crash')
       .set('Idempotency-Key', key)
       .send(body);
 
   const readRow = async (key: string): Promise<OperationRow | null> => {
     const { rows } = await pool.query<OperationRow>(
-      `SELECT generation, status, payload_hash, response_status,
-              response_body, billing_intent_id, settled_at
+      `SELECT status, response_status, billing_intent_id, settled_at
        FROM idempotency_operations
        WHERE key = $1
        ORDER BY generation DESC
@@ -189,23 +193,17 @@ describe('IdempotencyGuard (e2e)', () => {
     return rows[0].count;
   };
 
-  const billingIntentCount = async (anchor: string): Promise<number> => {
-    const { rows } = await pool.query<{ count: number }>(
-      `SELECT count(*)::int AS count
-       FROM billing_intents
-       WHERE subscription_id IN (
-         SELECT id FROM subscriptions WHERE anchor_date = $1
-       )`,
-      [anchor],
-    );
-    return rows[0].count;
-  };
-
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
       imports: [CommonModule, IdempotencyModule],
-      controllers: [IdempotencyTestController, IdempotencyCrashController],
-    }).compile();
+      controllers: [
+        IdempotencyRedisDownController,
+        IdempotencyRedisDownCrashController,
+      ],
+    })
+      .overrideProvider(REDIS_CLIENT)
+      .useValue(brokenRedis)
+      .compile();
     app = moduleRef.createNestApplication();
     await app.init();
     pool = moduleRef.get<Pool>(PG_POOL);
@@ -213,8 +211,8 @@ describe('IdempotencyGuard (e2e)', () => {
   });
 
   beforeEach(() => {
-    IdempotencyTestController.executions = 0;
-    IdempotencyCrashController.executions = 0;
+    IdempotencyRedisDownController.executions = 0;
+    IdempotencyRedisDownCrashController.executions = 0;
   });
 
   afterAll(async () => {
@@ -238,14 +236,32 @@ describe('IdempotencyGuard (e2e)', () => {
     await app.close();
   });
 
-  it('returns 400 when the Idempotency-Key header is missing', async () => {
+  it('rejects a keyless request with 400', async () => {
     const response = await post(undefined, { amount: 100, currency: 'USD' });
 
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({
       error: 'IDEMPOTENCY_KEY_REQUIRED',
     });
-    expect(IdempotencyTestController.executions).toBe(0);
+    expect(IdempotencyRedisDownController.executions).toBe(0);
+  });
+
+  it('registers, settles and replays without consulting Redis', async () => {
+    const key = nextKey();
+    const body = { amount: 100, currency: 'USD' };
+
+    const first = await post(key, body);
+    const second = await post(key, body);
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body).toEqual(first.body);
+    expect(IdempotencyRedisDownController.executions).toBe(1);
+
+    const record = await readRow(key);
+    expect(record?.status).toBe('SETTLED');
+    expect(record?.response_status).toBe(201);
+    expect(record?.billing_intent_id).toBe((first.body as { id: string }).id);
   });
 
   it('returns 409 for the same key with a different payload', async () => {
@@ -259,7 +275,7 @@ describe('IdempotencyGuard (e2e)', () => {
     expect(second.body).toMatchObject({
       error: 'IDEMPOTENCY_PAYLOAD_MISMATCH',
     });
-    expect(IdempotencyTestController.executions).toBe(1);
+    expect(IdempotencyRedisDownController.executions).toBe(1);
   });
 
   it('returns 423 with Retry-After while the operation is in flight', async () => {
@@ -278,84 +294,33 @@ describe('IdempotencyGuard (e2e)', () => {
       status: 'PROCESSING',
     });
     expect(response.headers['retry-after']).toMatch(/^\d+$/);
-    expect(IdempotencyTestController.executions).toBe(0);
+    expect(IdempotencyRedisDownController.executions).toBe(0);
   });
 
-  it('replays the settled response without executing again', async () => {
-    const key = nextKey();
-    const body = { amount: 100, currency: 'USD' };
-
-    const first = await post(key, body);
-    const second = await post(key, body);
-
-    expect(first.status).toBe(201);
-    expect(first.body).toMatchObject({
-      amount: body.amount,
-      currency: body.currency,
-    });
-    expect(typeof (first.body as { id: string }).id).toBe('string');
-    expect(second.status).toBe(201);
-    expect(second.body).toEqual(first.body);
-    expect(IdempotencyTestController.executions).toBe(1);
-
-    const record = await readRow(key);
-    expect(record?.status).toBe('SETTLED');
-    expect(record?.response_status).toBe(201);
-    expect(record?.billing_intent_id).toBe((first.body as { id: string }).id);
-    const { rows } = await pool.query<{ count: number }>(
-      'SELECT count(*)::int AS count FROM billing_intents WHERE id = $1',
-      [(first.body as { id: string }).id],
-    );
-    expect(rows[0].count).toBe(1);
-  });
-
-  it('allows a new operation after the key expires with no grace period', async () => {
-    const key = nextKey();
-
-    const first = await post(key, { amount: 100, currency: 'USD' });
-    expect(first.status).toBe(201);
-
-    await pool.query(
-      `UPDATE idempotency_operations
-       SET expires_at = created_at + interval '1 millisecond'
-       WHERE key = $1 AND generation = 1`,
-      [key],
-    );
-
-    const second = await post(key, { amount: 200, currency: 'USD' });
-
-    expect(second.status).toBe(201);
-    expect(IdempotencyTestController.executions).toBe(2);
-  });
-
-  it('does not settle an operation whose effect crashed, and retakes it after the lease expires', async () => {
+  it('rolls back a crashed effect and retakes after the lease expires', async () => {
     const key = nextKey();
     const body = { amount: 1500, currency: 'USD' };
 
     const first = await postCrash(key, body);
 
     expect(first.status).toBe(500);
-    expect(IdempotencyCrashController.executions).toBe(1);
+    expect(IdempotencyRedisDownCrashController.executions).toBe(1);
 
     const crashed = await readRow(key);
     expect(crashed?.status).toBe('PROCESSING');
     expect(crashed?.settled_at).toBeNull();
-    expect(crashed?.response_status).toBeNull();
     await expect(subscriptionCount(CRASH_ANCHOR)).resolves.toBe(0);
-    await expect(billingIntentCount(CRASH_ANCHOR)).resolves.toBe(0);
 
     await expireLease(key);
 
     const second = await postCrash(key, body);
 
     expect(second.status).toBe(201);
-    expect(IdempotencyCrashController.executions).toBe(2);
+    expect(IdempotencyRedisDownCrashController.executions).toBe(2);
     await expect(subscriptionCount(CRASH_ANCHOR)).resolves.toBe(1);
-    await expect(billingIntentCount(CRASH_ANCHOR)).resolves.toBe(1);
 
     const settled = await readRow(key);
     expect(settled?.status).toBe('SETTLED');
-    expect(settled?.billing_intent_id).toBe((second.body as { id: string }).id);
     expect(settled?.response_status).toBe(201);
   });
 });

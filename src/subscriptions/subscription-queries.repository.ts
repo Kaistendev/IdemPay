@@ -43,7 +43,7 @@ const SELECT_PAYMENT_ATTEMPTS = `
 SELECT
   id,
   billing_intent_id AS "billingIntentId",
-  attempt_no AS "attemptNo",
+  auto_seq AS "attemptNo",
   provider_operation_id AS "providerOperationId",
   status,
   error_type AS "errorType",
@@ -51,7 +51,7 @@ SELECT
   finished_at AS "finishedAt"
 FROM payment_attempts
 WHERE billing_intent_id = ANY($1::uuid[])
-ORDER BY billing_intent_id ASC, attempt_no ASC
+ORDER BY billing_intent_id ASC, auto_seq ASC NULLS LAST
 `;
 
 @Injectable()

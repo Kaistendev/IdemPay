@@ -1,8 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
-import { of } from 'rxjs';
-import { mergeMap } from 'rxjs/operators';
+import { lastValueFrom, of } from 'rxjs';
 import type {
   CallHandler,
   ExecutionContext,
@@ -10,18 +9,25 @@ import type {
 } from '@nestjs/common';
 import type { Observable } from 'rxjs';
 import type { Request, Response } from 'express';
-import { IDEMPOTENCY_STORE } from './idempotency.constants';
+import type { Pool } from 'pg';
+import { PG_POOL } from '../health/health.constants';
 import type { IdempotencyRequest } from './idempotency.context';
-import type { IdempotencyStorePort } from './idempotency.types';
+import { IdempotencyRepository } from './idempotency.repository';
+import { IdempotencyUnitOfWork } from './idempotency.uow';
 
 @Injectable()
 export class IdempotencySettlementInterceptor implements NestInterceptor {
   constructor(
-    @Inject(IDEMPOTENCY_STORE) private readonly store: IdempotencyStorePort,
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly repository: IdempotencyRepository,
+    private readonly uow: IdempotencyUnitOfWork,
     private readonly reflector: Reflector,
   ) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+  async intercept(
+    context: ExecutionContext,
+    next: CallHandler,
+  ): Promise<Observable<unknown>> {
     const request = context.switchToHttp().getRequest<IdempotencyRequest>();
     const operation = request.idempotencyOperationContext;
 
@@ -35,21 +41,35 @@ export class IdempotencySettlementInterceptor implements NestInterceptor {
       return of(replay.body);
     }
 
-    if (!operation.acquired) {
+    if (!operation.acquired || operation.generation === null) {
       return next.handle();
     }
 
     const statusCode = this.resolveStatusCode(context);
+    const client = await this.pool.connect();
 
-    return next.handle().pipe(
-      mergeMap(async (body: unknown) => {
-        await this.store.settle(operation.key, {
+    try {
+      await client.query('BEGIN');
+      const body: unknown = await this.uow.run(client, () =>
+        lastValueFrom(next.handle()),
+      );
+      await this.repository.settle(
+        client,
+        operation.key,
+        operation.generation,
+        {
           response: { statusCode, body },
           billingIntentRef: operation.billingIntentRef,
-        });
-        return body;
-      }),
-    );
+        },
+      );
+      await client.query('COMMIT');
+      return of(body);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private resolveStatusCode(context: ExecutionContext): number {

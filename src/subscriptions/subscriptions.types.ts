@@ -35,6 +35,7 @@ export interface SubscriptionsRepositoryPort {
 export type BillingIntentStatus =
   | 'SCHEDULED'
   | 'IN_FLIGHT'
+  | 'RETRY_PENDING'
   | 'SUCCEEDED'
   | 'FAILED_FINAL'
   | 'UNKNOWN'

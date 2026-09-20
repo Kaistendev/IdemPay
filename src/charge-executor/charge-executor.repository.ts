@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { buildProviderOperationId } from '../gateway/provider-operation-id';
 import { PG_POOL } from '../health/health.constants';
 import type { BillingIntentStatus } from '../subscriptions/subscriptions.types';
+import { EXECUTION_TIMEOUT } from './execution-timeout';
 import { MAX_ATTEMPTS } from './charge-executor.types';
 import type {
   AttemptSettlement,
@@ -17,16 +18,16 @@ WHERE id = $1
 FOR UPDATE
 `;
 
-const LAST_ATTEMPT_NO = `
-SELECT COALESCE(MAX(attempt_no), 0)::int AS "attemptNo"
+const LAST_AUTO_SEQ = `
+SELECT COALESCE(MAX(auto_seq), 0)::int AS "attemptNo"
 FROM payment_attempts
-WHERE billing_intent_id = $1
+WHERE billing_intent_id = $1 AND trigger = 'AUTO'
 `;
 
 const INSERT_ATTEMPT = `
 INSERT INTO payment_attempts
-  (billing_intent_id, attempt_no, provider_operation_id, status)
-VALUES ($1, $2, $3, 'IN_FLIGHT')
+  (billing_intent_id, trigger, auto_seq, provider_operation_id, status, deadline_at)
+VALUES ($1, 'AUTO', $2, $3, 'IN_FLIGHT', now() + ($4 * interval '1 millisecond'))
 RETURNING id
 `;
 
@@ -68,7 +69,10 @@ const SETTLEMENT_TARGETS = {
 
 @Injectable()
 export class ChargeExecutorRepository implements ChargeExecutorPort {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    @Inject(EXECUTION_TIMEOUT) private readonly timeoutMs: number,
+  ) {}
 
   async startAttempt(billingIntentId: string): Promise<AttemptStartResult> {
     const client = await this.pool.connect();
@@ -99,7 +103,7 @@ export class ChargeExecutorRepository implements ChargeExecutorPort {
         return { outcome: 'NOT_SCHEDULED', billingIntentId, status };
       }
 
-      const last = await client.query<{ attemptNo: number }>(LAST_ATTEMPT_NO, [
+      const last = await client.query<{ attemptNo: number }>(LAST_AUTO_SEQ, [
         billingIntentId,
       ]);
       const attemptNo = last.rows[0].attemptNo + 1;
@@ -121,6 +125,7 @@ export class ChargeExecutorRepository implements ChargeExecutorPort {
         billingIntentId,
         attemptNo,
         providerOperationId,
+        this.timeoutMs,
       ]);
       await client.query(MARK_IN_FLIGHT, [billingIntentId]);
 

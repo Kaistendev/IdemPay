@@ -62,11 +62,11 @@ describe('charge confirmation (e2e)', () => {
       errorType: string | null;
       finishedAt: Date | null;
     }>(
-      `SELECT attempt_no AS "attemptNo",
+      `SELECT auto_seq AS "attemptNo",
               provider_operation_id AS "providerOperationId",
               status, error_type AS "errorType", finished_at AS "finishedAt"
        FROM payment_attempts WHERE billing_intent_id = $1
-       ORDER BY attempt_no`,
+       ORDER BY auto_seq`,
       [intentId],
     );
     return rows;

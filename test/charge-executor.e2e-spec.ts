@@ -47,17 +47,17 @@ describe('charge executor (e2e)', () => {
 
   const createAttempt = async (
     intentId: string,
-    attemptNo: number,
+    autoSeq: number,
     status: string,
     finishedAt: string | null,
   ): Promise<string> => {
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO payment_attempts
-         (billing_intent_id, attempt_no, provider_operation_id, status,
+         (billing_intent_id, trigger, auto_seq, provider_operation_id, status,
           error_type, finished_at)
-       VALUES ($1, $2, $3, $4, NULL, $5)
+       VALUES ($1, 'AUTO', $2, $3, $4, NULL, $5)
        RETURNING id`,
-      [intentId, attemptNo, nextProviderOperation(), status, finishedAt],
+      [intentId, autoSeq, nextProviderOperation(), status, finishedAt],
     );
     return rows[0].id;
   };
@@ -127,7 +127,7 @@ describe('charge executor (e2e)', () => {
       status: string;
       finishedAt: Date | null;
     }>(
-      `SELECT attempt_no AS "attemptNo",
+      `SELECT auto_seq AS "attemptNo",
               provider_operation_id AS "providerOperationId",
               status, finished_at AS "finishedAt"
        FROM payment_attempts WHERE billing_intent_id = $1`,
@@ -215,13 +215,8 @@ describe('charge executor (e2e)', () => {
   it('refuses to register a sixth attempt', async () => {
     const subscriptionId = await createSubscription();
     const intentId = await createIntent(subscriptionId);
-    for (let attemptNo = 1; attemptNo <= 5; attemptNo += 1) {
-      await createAttempt(
-        intentId,
-        attemptNo,
-        'FAILED',
-        '2026-05-10T12:00:00Z',
-      );
+    for (let autoSeq = 1; autoSeq <= 5; autoSeq += 1) {
+      await createAttempt(intentId, autoSeq, 'FAILED', '2026-05-10T12:00:00Z');
     }
 
     const result = await executor.startAttempt(intentId);

@@ -6,7 +6,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PG_POOL, REDIS_CLIENT } from '../src/health/health.constants';
-import { idempotencyRecordKey } from '../src/idempotency/idempotency.constants';
+import { idempotencyLockKey } from '../src/idempotency/idempotency.constants';
 
 interface SubscriptionResponse {
   id: string;
@@ -46,7 +46,7 @@ describe('subscriptions create (e2e)', () => {
   const nextKey = (): string => {
     counter += 1;
     const key = `${runId}-${counter}`;
-    createdKeys.push(idempotencyRecordKey(key));
+    createdKeys.push(idempotencyLockKey(key));
     return key;
   };
 
