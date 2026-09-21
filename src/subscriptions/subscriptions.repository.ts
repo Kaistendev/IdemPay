@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Pool } from 'pg';
 import { PG_POOL } from '../health/health.constants';
+import { IdempotencyUnitOfWork } from '../idempotency/idempotency.uow';
 import type { CreateSubscriptionRequest } from './subscription.schema';
 import type {
   SubscriptionRecord,
@@ -23,10 +24,14 @@ RETURNING
 
 @Injectable()
 export class SubscriptionsRepository implements SubscriptionsRepositoryPort {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    private readonly uow: IdempotencyUnitOfWork,
+  ) {}
 
   async insert(input: CreateSubscriptionRequest): Promise<SubscriptionRecord> {
-    const { rows } = await this.pool.query<SubscriptionRecord>(
+    const client = this.uow.current() ?? this.pool;
+    const { rows } = await client.query<SubscriptionRecord>(
       INSERT_SUBSCRIPTION,
       [
         input.amount,

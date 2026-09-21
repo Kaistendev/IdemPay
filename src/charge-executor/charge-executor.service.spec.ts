@@ -66,15 +66,19 @@ class FakeGateway implements IPaymentGateway {
   }
 }
 
+const FIXED_NOW = new Date('2026-01-01T00:00:00Z');
+
 const serviceFor = (
   start: AttemptStartResult,
   outcome: ChargeOutcome,
   verification: VerificationResult,
+  clock = { now: () => FIXED_NOW },
+  rand = () => 0.5,
 ) => {
   const executor = new FakeExecutor(start);
   const gateway = new FakeGateway(outcome, verification);
   return {
-    service: new ChargeExecutorService(executor, gateway),
+    service: new ChargeExecutorService(executor, gateway, clock, rand),
     executor,
     gateway,
   };
@@ -110,14 +114,64 @@ describe('ChargeExecutorService', () => {
     expect(executor.settlements).toEqual([{ outcome: 'UNKNOWN' }]);
   });
 
-  it('settles FAILED with the classified error of a declined charge', async () => {
+  it('settles FAILED_FINAL for a declined charge without scheduling a retry', async () => {
     const { service, executor } = serviceFor(STARTED, 'DECLINED', 'FAILED');
 
     const result = await service.execute(INTENT);
 
-    expect(result).toMatchObject({ outcome: 'FAILED', errorType: 'DECLINED' });
+    expect(result).toMatchObject({
+      outcome: 'FAILED_FINAL',
+      errorType: 'DECLINED',
+    });
     expect(executor.settlements).toEqual([
-      { outcome: 'FAILED', errorType: 'DECLINED' },
+      { outcome: 'FAILED_FINAL', errorType: 'DECLINED' },
+    ]);
+  });
+
+  it('schedules a RETRY_PENDING with backoff for a retryable provider error', async () => {
+    const { service, executor } = serviceFor(
+      STARTED,
+      'PROVIDER_ERROR',
+      'FAILED',
+    );
+
+    const result = await service.execute(INTENT);
+
+    expect(result).toMatchObject({
+      outcome: 'RETRY_PENDING',
+      errorType: 'PROVIDER_ERROR',
+      attemptNo: 1,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        nextAttemptAt: new Date('2026-01-01T00:00:10Z'),
+      }),
+    );
+    expect(executor.settlements).toEqual([
+      {
+        outcome: 'RETRY_PENDING',
+        errorType: 'PROVIDER_ERROR',
+        nextAttemptAt: new Date('2026-01-01T00:00:10Z'),
+      },
+    ]);
+  });
+
+  it('settles FAILED_FINAL on the fifth retryable failure', async () => {
+    const { service, executor } = serviceFor(
+      { ...STARTED, attemptNo: 5 },
+      'PROVIDER_ERROR',
+      'FAILED',
+    );
+
+    const result = await service.execute(INTENT);
+
+    expect(result).toMatchObject({
+      outcome: 'FAILED_FINAL',
+      errorType: 'PROVIDER_ERROR',
+      attemptNo: 5,
+    });
+    expect(executor.settlements).toEqual([
+      { outcome: 'FAILED_FINAL', errorType: 'PROVIDER_ERROR' },
     ]);
   });
 

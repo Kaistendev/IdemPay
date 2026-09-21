@@ -50,11 +50,13 @@ export type AttemptStartResult =
   | NotScheduledAttempt
   | ExhaustedAttempt;
 
-export type SettlementOutcome = 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+export type SettlementOutcome =
+  'SUCCEEDED' | 'RETRY_PENDING' | 'FAILED_FINAL' | 'UNKNOWN';
 
 export type AttemptSettlement =
   | { outcome: 'SUCCEEDED' }
-  | { outcome: 'FAILED'; errorType: PaymentError }
+  | { outcome: 'RETRY_PENDING'; errorType: PaymentError; nextAttemptAt: Date }
+  | { outcome: 'FAILED_FINAL'; errorType: PaymentError }
   | { outcome: 'UNKNOWN' };
 
 export interface ChargeExecutorPort {
@@ -75,8 +77,19 @@ export interface SucceededExecution {
   chargeOutcome: ChargeOutcome;
 }
 
-export interface FailedExecution {
-  outcome: 'FAILED';
+export interface RetryPendingExecution {
+  outcome: 'RETRY_PENDING';
+  billingIntentId: string;
+  attemptId: string;
+  attemptNo: number;
+  providerOperationId: string;
+  chargeOutcome: ChargeOutcome;
+  errorType: PaymentError;
+  nextAttemptAt: Date;
+}
+
+export interface FinalFailedExecution {
+  outcome: 'FAILED_FINAL';
   billingIntentId: string;
   attemptId: string;
   attemptNo: number;
@@ -101,4 +114,8 @@ export interface NotStartedExecution {
 }
 
 export type ChargeExecutionResult =
-  SucceededExecution | FailedExecution | UnknownExecution | NotStartedExecution;
+  | SucceededExecution
+  | RetryPendingExecution
+  | FinalFailedExecution
+  | UnknownExecution
+  | NotStartedExecution;

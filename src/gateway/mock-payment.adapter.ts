@@ -34,6 +34,7 @@ function toVerification(
 @Injectable()
 export class MockPaymentAdapter implements IPaymentGateway {
   private readonly operations = new Map<string, ChargeOutcome>();
+  private readonly rejected = new Set<string>();
   private executions = 0;
 
   constructor(
@@ -41,28 +42,38 @@ export class MockPaymentAdapter implements IPaymentGateway {
   ) {}
 
   charge(request: ChargeRequest): Promise<ChargeResult> {
-    const recorded = this.operations.get(request.providerOperationId);
+    const providerOperationId = request.providerOperationId;
+    if (this.rejected.has(providerOperationId)) {
+      return Promise.resolve({
+        providerOperationId,
+        outcome: 'DECLINED',
+      });
+    }
+
+    const recorded = this.operations.get(providerOperationId);
     if (recorded !== undefined) {
       return Promise.resolve({
-        providerOperationId: request.providerOperationId,
+        providerOperationId,
         outcome: recorded,
       });
     }
 
     const outcome = SCENARIO_OUTCOMES[this.scenario];
-    this.operations.set(request.providerOperationId, outcome);
+    this.operations.set(providerOperationId, outcome);
     this.executions += 1;
 
     return Promise.resolve({
-      providerOperationId: request.providerOperationId,
+      providerOperationId,
       outcome,
     });
   }
 
   verify(providerOperationId: string): Promise<VerificationResult> {
-    return Promise.resolve(
-      toVerification(this.operations.get(providerOperationId)),
-    );
+    const result = toVerification(this.operations.get(providerOperationId));
+    if (result === 'FAILED') {
+      this.rejected.add(providerOperationId);
+    }
+    return Promise.resolve(result);
   }
 
   executedChargeCount(): number {

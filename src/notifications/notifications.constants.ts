@@ -1,0 +1,1 @@
+export const OUTBOX_QUERIES = 'OUTBOX_QUERIES';

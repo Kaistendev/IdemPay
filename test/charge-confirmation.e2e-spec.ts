@@ -47,8 +47,10 @@ describe('charge confirmation (e2e)', () => {
     const { rows } = await pool.query<{
       status: string;
       settledAt: Date | null;
+      unknownSince: Date | null;
     }>(
-      `SELECT status, settled_at AS "settledAt" FROM billing_intents WHERE id = $1`,
+      `SELECT status, settled_at AS "settledAt", unknown_since AS "unknownSince"
+       FROM billing_intents WHERE id = $1`,
       [intentId],
     );
     return rows[0];
@@ -177,6 +179,7 @@ describe('charge confirmation (e2e)', () => {
       const intent = await readIntent(intentId);
       expect(intent.status).toBe('UNKNOWN');
       expect(intent.settledAt).toBeNull();
+      expect(intent.unknownSince).toBeInstanceOf(Date);
 
       const attempts = await readAttempts(intentId);
       expect(attempts).toHaveLength(1);
@@ -196,6 +199,44 @@ describe('charge confirmation (e2e)', () => {
         reason: 'NOT_SCHEDULED',
       });
       expect(await readAttempts(intentId)).toHaveLength(1);
+    });
+  });
+
+  describe('with an ambiguous outcome', () => {
+    beforeAll(async () => {
+      moduleRef = await scenarioOf('AMBIGUOUS').compile();
+      app = moduleRef.createNestApplication();
+      await app.listen(0);
+      pool = moduleRef.get<Pool>(PG_POOL);
+      executor = moduleRef.get(ChargeExecutorService);
+    });
+
+    afterAll(async () => {
+      await cleanup();
+      await app.close();
+    });
+
+    it('never settles success and records unknown_since (RF-15)', async () => {
+      const subscriptionId = await createSubscription();
+      const intentId = await createIntent(subscriptionId);
+
+      const result = await executor.execute(intentId);
+
+      expect(result).toMatchObject({ outcome: 'UNKNOWN', attemptNo: 1 });
+
+      const intent = await readIntent(intentId);
+      expect(intent.status).toBe('UNKNOWN');
+      expect(intent.settledAt).toBeNull();
+      expect(intent.unknownSince).toBeInstanceOf(Date);
+
+      const attempts = await readAttempts(intentId);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        attemptNo: 1,
+        status: 'UNKNOWN',
+        errorType: null,
+      });
+      expect(attempts[0].finishedAt).toBeInstanceOf(Date);
     });
   });
 });

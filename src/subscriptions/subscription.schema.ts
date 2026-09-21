@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isValidTimeZone } from '../common/time/scheduling-timezone';
+import { ISO_4217_CURRENCY_CODES } from './iso4217';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -19,8 +20,8 @@ function isCalendarDate(value: string): boolean {
 }
 
 export const createSubscriptionSchema = z.object({
-  amount: z.number().positive(),
-  currency: z.string().regex(/^[A-Z]{3}$/),
+  amount: z.number().int().positive(),
+  currency: z.enum(ISO_4217_CURRENCY_CODES),
   frequency: z.enum(['daily', 'weekly', 'monthly', 'annual']),
   startDate: z.string().refine(isCalendarDate, {
     message: 'startDate must be a valid calendar date (YYYY-MM-DD)',

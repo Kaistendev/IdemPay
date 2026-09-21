@@ -11,9 +11,7 @@ export type {
 } from '../subscriptions/subscriptions.types';
 
 export type TransitionAggregate =
-  | 'billingIntent'
-  | 'paymentAttempt'
-  | 'subscription';
+  'billingIntent' | 'paymentAttempt' | 'subscription';
 
 export type BillingIntentTransition = readonly [
   BillingIntentStatus,
@@ -31,9 +29,7 @@ export type SubscriptionTransition = readonly [
 ];
 
 export type AnyTransition =
-  | BillingIntentTransition
-  | PaymentAttemptTransition
-  | SubscriptionTransition;
+  BillingIntentTransition | PaymentAttemptTransition | SubscriptionTransition;
 
 export interface IllegalTransition {
   aggregate: TransitionAggregate;

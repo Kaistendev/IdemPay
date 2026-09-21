@@ -1,10 +1,11 @@
 import type { ChargeOutcome } from './gateway.types';
 
 export const RETRYABLE_PAYMENT_ERRORS = [
-  'TIMEOUT',
   'PROVIDER_ERROR',
   'TEMPORARY_UNAVAILABLE',
 ] as const;
+
+export const AMBIGUOUS_PAYMENT_ERRORS = ['TIMEOUT', 'AMBIGUOUS'] as const;
 
 export const NON_RETRYABLE_PAYMENT_ERRORS = [
   'DECLINED',
@@ -15,17 +16,19 @@ export const NON_RETRYABLE_PAYMENT_ERRORS = [
 
 export const PAYMENT_ERRORS = [
   ...RETRYABLE_PAYMENT_ERRORS,
+  ...AMBIGUOUS_PAYMENT_ERRORS,
   ...NON_RETRYABLE_PAYMENT_ERRORS,
 ] as const;
 
 export type PaymentError = (typeof PAYMENT_ERRORS)[number];
 
-export type ErrorDisposition = 'RETRYABLE' | 'NON_RETRYABLE';
+export type ErrorDisposition = 'RETRYABLE' | 'AMBIGUOUS' | 'NON_RETRYABLE';
 
 const DISPOSITIONS: Record<PaymentError, ErrorDisposition> = {
-  TIMEOUT: 'RETRYABLE',
   PROVIDER_ERROR: 'RETRYABLE',
   TEMPORARY_UNAVAILABLE: 'RETRYABLE',
+  TIMEOUT: 'AMBIGUOUS',
+  AMBIGUOUS: 'AMBIGUOUS',
   DECLINED: 'NON_RETRYABLE',
   INVALID_PAYMENT: 'NON_RETRYABLE',
   INVALID_AMOUNT: 'NON_RETRYABLE',

@@ -1,0 +1,5 @@
+export const CHARGES_EXECUTE_QUEUE = 'charges.execute';
+export const EXECUTE_JOB_NAME = 'execute';
+export const CHARGES_QUEUE = 'CHARGES_QUEUE';
+export const CHARGE_EXECUTION_CONNECTION = 'CHARGE_EXECUTION_CONNECTION';
+export const DISPATCH_REPOSITORY = 'DISPATCH_REPOSITORY';

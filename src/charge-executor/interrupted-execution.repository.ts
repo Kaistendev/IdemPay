@@ -4,7 +4,6 @@ import type { Clock } from '../common/time/clock';
 import { CLOCK } from '../common/time/clock';
 import { PG_POOL } from '../health/health.constants';
 import type { BillingIntentStatus } from '../subscriptions/subscriptions.types';
-import { EXECUTION_TIMEOUT } from './execution-timeout';
 import type {
   InterruptedExecutionRecoveryPort,
   RecoveredExecution,
@@ -18,7 +17,7 @@ FROM payment_attempts a
 JOIN billing_intents i ON i.id = a.billing_intent_id
 WHERE a.status = 'IN_FLIGHT'
   AND i.status = 'IN_FLIGHT'
-  AND a.started_at <= $1
+  AND a.deadline_at < $1
 ORDER BY a.started_at
 `;
 
@@ -53,13 +52,12 @@ export class InterruptedExecutionRepository implements InterruptedExecutionRecov
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
     @Inject(CLOCK) private readonly clock: Clock,
-    @Inject(EXECUTION_TIMEOUT) private readonly timeoutMs: number,
   ) {}
 
   async recoverExpired(): Promise<RecoveredExecution[]> {
-    const cutoff = new Date(this.clock.now().getTime() - this.timeoutMs);
+    const now = new Date(this.clock.now());
     const candidates = await this.pool.query<RecoveredExecution>(FIND_EXPIRED, [
-      cutoff,
+      now,
     ]);
 
     const recovered: RecoveredExecution[] = [];

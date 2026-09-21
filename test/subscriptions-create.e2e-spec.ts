@@ -135,6 +135,33 @@ describe('subscriptions create (e2e)', () => {
     expect(persisted.rows[0].count).toBe(1);
   });
 
+  it('returns 400 when the Idempotency-Key header is missing', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/subscriptions')
+      .send(validBody());
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      error: 'IDEMPOTENCY_KEY_REQUIRED',
+    });
+  });
+
+  it('rejects a decimal amount with 400', async () => {
+    const response = await post(nextKey(), { ...validBody(), amount: 15.5 });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ error: 'VALIDATION_ERROR' });
+    expect(response.text).toContain('"path":"amount"');
+  });
+
+  it('rejects a non-ISO 4217 currency with 400', async () => {
+    const response = await post(nextKey(), { ...validBody(), currency: 'ZZZ' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ error: 'VALIDATION_ERROR' });
+    expect(response.text).toContain('"path":"currency"');
+  });
+
   it('rejects a non-positive amount with 400', async () => {
     const response = await post(nextKey(), { ...validBody(), amount: 0 });
 

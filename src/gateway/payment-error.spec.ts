@@ -2,6 +2,7 @@ import type { ChargeOutcome } from './gateway.types';
 import { MockPaymentAdapter } from './mock-payment.adapter';
 import { PAYMENT_SCENARIOS } from './gateway.types';
 import {
+  AMBIGUOUS_PAYMENT_ERRORS,
   NON_RETRYABLE_PAYMENT_ERRORS,
   PAYMENT_ERRORS,
   RETRYABLE_PAYMENT_ERRORS,
@@ -12,12 +13,15 @@ import {
 import type { PaymentError } from './payment-error';
 
 describe('payment error catalog', () => {
-  it('declares the retryable errors from RF-20', () => {
+  it('declares the retryable errors from RF-20 (no TIMEOUT)', () => {
     expect(RETRYABLE_PAYMENT_ERRORS).toEqual([
-      'TIMEOUT',
       'PROVIDER_ERROR',
       'TEMPORARY_UNAVAILABLE',
     ]);
+  });
+
+  it('declares the ambiguous errors (D6) - not retryable without verify', () => {
+    expect(AMBIGUOUS_PAYMENT_ERRORS).toEqual(['TIMEOUT', 'AMBIGUOUS']);
   });
 
   it('declares the non-retryable errors from RF-20', () => {
@@ -31,7 +35,11 @@ describe('payment error catalog', () => {
 
   it('exposes every declared error in the catalog', () => {
     expect([...PAYMENT_ERRORS].sort()).toEqual(
-      [...RETRYABLE_PAYMENT_ERRORS, ...NON_RETRYABLE_PAYMENT_ERRORS].sort(),
+      [
+        ...RETRYABLE_PAYMENT_ERRORS,
+        ...AMBIGUOUS_PAYMENT_ERRORS,
+        ...NON_RETRYABLE_PAYMENT_ERRORS,
+      ].sort(),
     );
   });
 
@@ -39,6 +47,14 @@ describe('payment error catalog', () => {
     expect(classifyPaymentError(error)).toBe('RETRYABLE');
     expect(isRetryablePaymentError(error)).toBe(true);
   });
+
+  it.each(AMBIGUOUS_PAYMENT_ERRORS)(
+    'classifies %s as ambiguous (not retryable)',
+    (error) => {
+      expect(classifyPaymentError(error)).toBe('AMBIGUOUS');
+      expect(isRetryablePaymentError(error)).toBe(false);
+    },
+  );
 
   it.each(NON_RETRYABLE_PAYMENT_ERRORS)(
     'classifies %s as non-retryable',
@@ -52,6 +68,24 @@ describe('payment error catalog', () => {
     expect(() => classifyPaymentError('STRIPE_WEIRD')).toThrow(
       /Unclassified payment error/,
     );
+  });
+
+  it('TIMEOUT never triggers a retry without verify (D6)', () => {
+    expect(isRetryablePaymentError('TIMEOUT')).toBe(false);
+    expect(classifyPaymentError('TIMEOUT')).toBe('AMBIGUOUS');
+  });
+
+  it('AMBIGUOUS never triggers a retry without verify (D6)', () => {
+    expect(isRetryablePaymentError('AMBIGUOUS')).toBe(false);
+    expect(classifyPaymentError('AMBIGUOUS')).toBe('AMBIGUOUS');
+  });
+
+  it('PROVIDER_ERROR remains retryable', () => {
+    expect(isRetryablePaymentError('PROVIDER_ERROR')).toBe(true);
+  });
+
+  it('TEMPORARY_UNAVAILABLE remains retryable', () => {
+    expect(isRetryablePaymentError('TEMPORARY_UNAVAILABLE')).toBe(true);
   });
 });
 
@@ -101,5 +135,11 @@ describe('errorTypeForOutcome', () => {
         expect(() => classifyPaymentError(error)).not.toThrow();
       }
     }
+  });
+
+  it('TIMEOUT mapped error is not retryable (D6)', () => {
+    const error = errorTypeForOutcome('TIMEOUT');
+    expect(error).toBe('TIMEOUT');
+    expect(isRetryablePaymentError(error!)).toBe(false);
   });
 });

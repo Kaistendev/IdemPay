@@ -131,6 +131,22 @@ export interface SubscriptionCancellationResult {
   omittedIntents: number;
 }
 
+export interface BillingIntentLiveRecord {
+  id: string;
+  status: BillingIntentStatus;
+}
+
+export interface SubscriptionLifecycleSnapshot {
+  id: string;
+  status: SubscriptionStatus;
+  cancelledAt: Date | null;
+  liveIntents: BillingIntentLiveRecord[];
+}
+
 export interface SubscriptionCancellationPort {
-  cancel(id: string): Promise<SubscriptionCancellationResult | null>;
+  load(id: string): Promise<SubscriptionLifecycleSnapshot | null>;
+  applyCancellation(
+    id: string,
+    omittedIntentIds: readonly string[],
+  ): Promise<{ cancelledAt: Date; omittedCount: number } | null>;
 }

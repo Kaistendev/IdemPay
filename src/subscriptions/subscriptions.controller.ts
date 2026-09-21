@@ -19,8 +19,8 @@ import type {
   CreateSubscriptionRequest,
   SubscriptionParams,
 } from './subscription.schema';
-import { SubscriptionsCancellationService } from './subscriptions.cancellation.service';
 import { SubscriptionsQueryService } from './subscriptions.query.service';
+import { SubscriptionLifecycleService } from './subscriptions.lifecycle.service';
 import { SubscriptionsService } from './subscriptions.service';
 import type {
   SubscriptionDetailResponse,
@@ -32,7 +32,7 @@ export class SubscriptionsController {
   constructor(
     private readonly subscriptions: SubscriptionsService,
     private readonly queries: SubscriptionsQueryService,
-    private readonly cancellations: SubscriptionsCancellationService,
+    private readonly cancellations: SubscriptionLifecycleService,
   ) {}
 
   @Post()

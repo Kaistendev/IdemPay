@@ -9,9 +9,7 @@ import {
   SUBSCRIPTION_STATES,
 } from './transitions.constants';
 import { TransitionsService } from './transitions.service';
-import type {
-  TransitionAggregate,
-} from './transitions.types';
+import type { TransitionAggregate } from './transitions.types';
 
 const BILLING_INTENT_STATES = [
   'SCHEDULED',
@@ -30,11 +28,7 @@ const PAYMENT_ATTEMPT_STATES = [
   'UNKNOWN',
 ] as const;
 
-const SUBSCRIPTION_STATES = [
-  'ACTIVE',
-  'PAUSED',
-  'CANCELLED',
-] as const;
+const SUBSCRIPTION_STATES = ['ACTIVE', 'PAUSED', 'CANCELLED'] as const;
 
 interface AggregateCase {
   aggregate: TransitionAggregate;
@@ -78,9 +72,7 @@ describe('TransitionsService', () => {
         allowed.map(([from, to]) => [`${from}->${to}`, true]),
       );
 
-      it.each(states.flatMap((from) =>
-        states.map((to) => ({ from, to })),
-      ))(
+      it.each(states.flatMap((from) => states.map((to) => ({ from, to }))))(
         decodeURIComponent(
           'permite $from -> $to solo si est%c3%a1 en la matriz (INV-07/08)',
         ),
@@ -92,9 +84,7 @@ describe('TransitionsService', () => {
 
       it('SUCCEEDED no admite salida (INV-07)', () => {
         for (const to of states) {
-          expect(
-            service.canTransition(aggregate, 'SUCCEEDED', to),
-          ).toBe(false);
+          expect(service.canTransition(aggregate, 'SUCCEEDED', to)).toBe(false);
         }
       });
 
@@ -108,11 +98,7 @@ describe('TransitionsService', () => {
 
   it('assertTransition lanza IllegalTransitionError en transición ilegal', () => {
     expect(() =>
-      service.assertTransition(
-        'billingIntent',
-        'SUCCEEDED',
-        'IN_FLIGHT',
-      ),
+      service.assertTransition('billingIntent', 'SUCCEEDED', 'IN_FLIGHT'),
     ).toThrow(/Transición ilegal/);
   });
 

@@ -5,6 +5,7 @@ import { createCalendarNonBusinessDaysMigration } from './003-create-calendar-no
 import { createIdempotencyOperationsMigration } from './004-create-idempotency-operations.migration';
 import { addBillingIntentStatesMigration } from './005-add-billing-intent-states.migration';
 import { addPaymentAttemptTriggersMigration } from './006-add-payment-attempt-triggers.migration';
+import { createNotificationsMigration } from './007-create-notifications.migration';
 
 export const MIGRATIONS: readonly Migration[] = [
   createSubscriptionsMigration,
@@ -13,4 +14,5 @@ export const MIGRATIONS: readonly Migration[] = [
   createIdempotencyOperationsMigration,
   addBillingIntentStatesMigration,
   addPaymentAttemptTriggersMigration,
+  createNotificationsMigration,
 ];

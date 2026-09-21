@@ -59,14 +59,15 @@ describe('subscriptions cancel (e2e)', () => {
     cycle: string,
     status: string,
     settledAt: string | null,
+    nextAttemptAt: string | null = null,
   ): Promise<string> => {
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO billing_intents
          (subscription_id, billing_cycle, schedule_date, amount, currency,
-          status, settled_at)
-       VALUES ($1, $2, $3::date, 100, 'USD', $4, $5)
+          status, settled_at, next_attempt_at)
+       VALUES ($1, $2, $3::date, 100, 'USD', $4, $5, $6)
        RETURNING id`,
-      [subscriptionId, cycle, cycle, status, settledAt],
+      [subscriptionId, cycle, cycle, status, settledAt, nextAttemptAt],
     );
     return rows[0].id;
   };
@@ -174,6 +175,55 @@ describe('subscriptions cancel (e2e)', () => {
       [subscriptionId],
     );
     expect(persisted.rows[0].status).toBe('CANCELLED');
+  });
+
+  it('omits a RETRY_PENDING intent with the cancellation reason', async () => {
+    const subscriptionId = await createSubscription();
+    await createIntent(
+      subscriptionId,
+      '2026-05-10',
+      'RETRY_PENDING',
+      null,
+      '2026-05-12T12:00:00Z',
+    );
+
+    const response = await cancel(subscriptionId, nextKey());
+
+    expect(response.status).toBe(200);
+    expect((response.body as SubscriptionDetailResponse).status).toBe(
+      'CANCELLED',
+    );
+
+    const persisted = await pool.query<{
+      status: string;
+      reason: string | null;
+    }>(
+      `SELECT status, omitted_reason AS reason
+       FROM billing_intents WHERE subscription_id = $1`,
+      [subscriptionId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      status: 'OMITTED',
+      reason: 'SUBSCRIPTION_CANCELLED',
+    });
+  });
+
+  it('leaves an UNKNOWN intent untouched so verification keeps its own result', async () => {
+    const subscriptionId = await createSubscription();
+    await createIntent(subscriptionId, '2026-05-10', 'UNKNOWN', null);
+
+    const response = await cancel(subscriptionId, nextKey());
+
+    expect(response.status).toBe(200);
+    expect((response.body as SubscriptionDetailResponse).status).toBe(
+      'CANCELLED',
+    );
+
+    const persisted = await pool.query<{ status: string }>(
+      'SELECT status FROM billing_intents WHERE subscription_id = $1',
+      [subscriptionId],
+    );
+    expect(persisted.rows[0].status).toBe('UNKNOWN');
   });
 
   it('keeps an IN_FLIGHT attempt and lets it finish after cancellation', async () => {
