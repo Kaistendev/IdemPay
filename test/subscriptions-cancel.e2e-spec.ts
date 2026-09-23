@@ -107,6 +107,25 @@ describe('subscriptions cancel (e2e)', () => {
     );
   };
 
+  const cancellationEvents = async (
+    subscriptionId: string,
+  ): Promise<
+    Array<{
+      type: string;
+      payload: { subscriptionId: string; reason: string };
+    }>
+  > => {
+    const { rows } = await pool.query<{
+      type: string;
+      payload: { subscriptionId: string; reason: string };
+    }>(
+      `SELECT type, payload FROM notifications WHERE aggregate_id = $1
+       ORDER BY created_at`,
+      [subscriptionId],
+    );
+    return rows;
+  };
+
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -128,6 +147,10 @@ describe('subscriptions cancel (e2e)', () => {
       );
       await pool.query(
         'DELETE FROM billing_intents WHERE subscription_id = ANY($1::uuid[])',
+        [createdSubscriptions],
+      );
+      await pool.query(
+        'DELETE FROM notifications WHERE aggregate_id = ANY($1::uuid[])',
         [createdSubscriptions],
       );
       await pool.query('DELETE FROM subscriptions WHERE id = ANY($1::uuid[])', [
@@ -226,7 +249,7 @@ describe('subscriptions cancel (e2e)', () => {
     expect(persisted.rows[0].status).toBe('UNKNOWN');
   });
 
-  it('keeps an IN_FLIGHT attempt and lets it finish after cancellation', async () => {
+  it('keeps an IN_FLIGHT attempt and lets it finish after cancellation // T60: @E2E-13 @RF-28 @RF-15 @RF-10', async () => {
     const subscriptionId = await createSubscription();
     const intentId = await createIntent(
       subscriptionId,
@@ -267,9 +290,12 @@ describe('subscriptions cancel (e2e)', () => {
     expect(afterBody.billingIntents[0].attempts[0]).toMatchObject({
       status: 'SUCCEEDED',
     });
+
+    const events = await cancellationEvents(subscriptionId);
+    expect(events).toHaveLength(1);
   });
 
-  it('replays the settled response for a repeated idempotency key', async () => {
+  it('replays the settled response for a repeated idempotency key // T60: @E2E-13 @RF-28', async () => {
     const subscriptionId = await createSubscription();
     await createIntent(subscriptionId, '2026-05-10', 'SCHEDULED', null);
     const key = nextKey();
@@ -287,6 +313,32 @@ describe('subscriptions cancel (e2e)', () => {
       [subscriptionId],
     );
     expect(omitted.rows[0].count).toBe(1);
+  });
+
+  it('emits a single CancellationEvent inside the cancellation transaction and never duplicates it', async () => {
+    const subscriptionId = await createSubscription();
+    await createIntent(subscriptionId, '2026-05-10', 'SCHEDULED', null);
+    const key = nextKey();
+
+    const first = await cancel(subscriptionId, key);
+    const second = await cancel(subscriptionId, key);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body).toEqual(first.body);
+
+    let events = await cancellationEvents(subscriptionId);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'CancellationEvent',
+      payload: { subscriptionId, reason: 'ADMIN' },
+    });
+
+    const third = await cancel(subscriptionId, nextKey());
+    expect(third.status).toBe(200);
+
+    events = await cancellationEvents(subscriptionId);
+    expect(events).toHaveLength(1);
   });
 
   it('does not change an existing cancellation when called with a new key', async () => {

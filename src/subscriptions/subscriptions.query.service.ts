@@ -1,7 +1,6 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { CalendarService } from '../calendar/calendar.service';
 import { ErrorCode } from '../common/errors/error-code';
-import { TimeService } from '../common/time/time.service';
-import { nextBillingDate } from './next-billing-date';
 import { SUBSCRIPTION_QUERIES } from './subscriptions.constants';
 import type {
   PaymentAttemptHistoryResponse,
@@ -15,7 +14,7 @@ export class SubscriptionsQueryService {
   constructor(
     @Inject(SUBSCRIPTION_QUERIES)
     private readonly queries: SubscriptionQueriesPort,
-    private readonly time: TimeService,
+    private readonly calendar: CalendarService,
   ) {}
 
   async findById(id: string): Promise<SubscriptionDetailResponse> {
@@ -53,6 +52,8 @@ export class SubscriptionsQueryService {
         status: intent.status,
         settledAt: intent.settledAt ? intent.settledAt.toISOString() : null,
         createdAt: intent.createdAt.toISOString(),
+        omittedReason: intent.omittedReason,
+        needsManualReview: intent.needsManualReview,
         attempts: attemptsByIntent.get(intent.id) ?? [],
       })),
     };
@@ -62,12 +63,13 @@ export class SubscriptionsQueryService {
     attempts: readonly {
       id: string;
       billingIntentId: string;
-      attemptNo: number;
+      attemptNo: number | null;
       providerOperationId: string;
       status: PaymentAttemptHistoryResponse['status'];
       errorType: string | null;
       startedAt: Date;
       finishedAt: Date | null;
+      trigger: PaymentAttemptHistoryResponse['trigger'];
     }[],
   ): Map<string, PaymentAttemptHistoryResponse[]> {
     const grouped = new Map<string, PaymentAttemptHistoryResponse[]>();
@@ -84,6 +86,7 @@ export class SubscriptionsQueryService {
         finishedAt: attempt.finishedAt
           ? attempt.finishedAt.toISOString()
           : null,
+        trigger: attempt.trigger,
       });
       grouped.set(attempt.billingIntentId, list);
     }
@@ -98,10 +101,10 @@ export class SubscriptionsQueryService {
       return null;
     }
 
-    return nextBillingDate(
+    return this.calendar.nextBillingDate(
       subscription.startDate,
       subscription.frequency,
-      this.time.today(),
+      this.calendar.today(),
     );
   }
 }

@@ -132,7 +132,7 @@ describe('Idempotency concurrency (e2e)', () => {
     await app.close();
   });
 
-  it('produces a single operation for N concurrent requests with the same key and payload', async () => {
+  it('produces a single operation for N concurrent requests with the same key and payload // T61: @INV-05 @INV-06', async () => {
     const key = nextKey();
     const body = { amount: 100, currency: 'USD' };
     const before = charges.executionCount();

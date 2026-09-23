@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CalendarModule } from '../calendar/calendar.module';
 import { CommonModule } from '../common/common.module';
 import { HealthModule } from '../health/health.module';
 import { IdempotencyModule } from '../idempotency/idempotency.module';
@@ -17,7 +18,13 @@ import { SubscriptionsRepository } from './subscriptions.repository';
 import { SubscriptionsService } from './subscriptions.service';
 
 @Module({
-  imports: [CommonModule, HealthModule, IdempotencyModule, TransitionsModule],
+  imports: [
+    CommonModule,
+    HealthModule,
+    IdempotencyModule,
+    TransitionsModule,
+    CalendarModule,
+  ],
   controllers: [SubscriptionsController],
   providers: [
     SubscriptionsService,

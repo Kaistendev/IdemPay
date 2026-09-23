@@ -5,6 +5,7 @@ export const ErrorCode = {
   Forbidden: 'FORBIDDEN',
   NotFound: 'NOT_FOUND',
   Conflict: 'CONFLICT',
+  InvalidTransition: 'INVALID_TRANSITION',
   Locked: 'LOCKED',
   InternalError: 'INTERNAL_ERROR',
   ServiceUnavailable: 'SERVICE_UNAVAILABLE',
@@ -12,6 +13,7 @@ export const ErrorCode = {
   IdempotencyKeyTooLong: 'IDEMPOTENCY_KEY_TOO_LONG',
   IdempotencyPayloadMismatch: 'IDEMPOTENCY_PAYLOAD_MISMATCH',
   IdempotencyLocked: 'IDEMPOTENCY_LOCKED',
+  ReprocessNotEligible: 'REPROCESS_NOT_ELIGIBLE',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

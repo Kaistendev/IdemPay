@@ -1,11 +1,15 @@
 import {
+  currentCycleDate,
+  cycleDateAt,
   daysInMonth,
   isBusinessDay,
+  isOverdueByTolerance,
   nextBusinessDay,
+  nextCycleDate,
   resolveScheduledDate,
   truncateToMonthEnd,
 } from './calendar';
-import type { CalendarConfig } from './calendar.types';
+import type { CalendarCadence, CalendarConfig } from './calendar.types';
 
 const WEEKENDS: CalendarConfig = { nonBusinessWeekdays: [0, 6] };
 const NO_WEEKENDS: CalendarConfig = { nonBusinessWeekdays: [] };
@@ -143,5 +147,289 @@ describe('resolveScheduledDate', () => {
 
   it('does not move an anchor that already lands on a business day', () => {
     expect(resolveScheduledDate(2026, 3, 16, WEEKENDS)).toBe('2026-03-16');
+  });
+});
+
+describe('nextCycleDate', () => {
+  const cases: Array<{
+    cadence: CalendarCadence;
+    anchor: string;
+    today: string;
+    expected: string;
+  }> = [
+    {
+      cadence: 'monthly',
+      anchor: '2026-06-01',
+      today: '2026-05-10',
+      expected: '2026-06-01',
+    },
+    {
+      cadence: 'daily',
+      anchor: '2026-06-01',
+      today: '2026-05-10',
+      expected: '2026-06-01',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-05-10',
+      today: '2026-05-10',
+      expected: '2026-05-10',
+    },
+    {
+      cadence: 'daily',
+      anchor: '2026-01-01',
+      today: '2026-01-10',
+      expected: '2026-01-10',
+    },
+    {
+      cadence: 'weekly',
+      anchor: '2026-01-01',
+      today: '2026-01-08',
+      expected: '2026-01-08',
+    },
+    {
+      cadence: 'weekly',
+      anchor: '2026-01-01',
+      today: '2026-01-09',
+      expected: '2026-01-15',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-10',
+      today: '2026-02-10',
+      expected: '2026-02-10',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-10',
+      today: '2026-02-11',
+      expected: '2026-03-10',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      today: '2026-02-01',
+      expected: '2026-02-28',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      today: '2026-03-01',
+      expected: '2026-03-31',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-03-31',
+      today: '2026-04-01',
+      expected: '2026-04-30',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      today: '2026-01-01',
+      expected: '2026-02-28',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      today: '2028-01-01',
+      expected: '2028-02-29',
+    },
+  ];
+
+  it.each(cases)(
+    'computes the next nominal cycle date for $cadence from $anchor on $today -> $expected',
+    ({ cadence, anchor, today, expected }) => {
+      expect(nextCycleDate(anchor, cadence, today)).toBe(expected);
+    },
+  );
+});
+
+describe('currentCycleDate', () => {
+  const cases: Array<{
+    cadence: CalendarCadence;
+    anchor: string;
+    today: string;
+    expected: string | null;
+  }> = [
+    {
+      cadence: 'monthly',
+      anchor: '2026-06-01',
+      today: '2026-05-10',
+      expected: null,
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-05-10',
+      today: '2026-05-10',
+      expected: '2026-05-10',
+    },
+    {
+      cadence: 'daily',
+      anchor: '2026-01-01',
+      today: '2026-01-10',
+      expected: '2026-01-10',
+    },
+    {
+      cadence: 'weekly',
+      anchor: '2026-01-01',
+      today: '2026-01-08',
+      expected: '2026-01-08',
+    },
+    {
+      cadence: 'weekly',
+      anchor: '2026-01-01',
+      today: '2026-01-09',
+      expected: '2026-01-08',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-10',
+      today: '2026-02-10',
+      expected: '2026-02-10',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-10',
+      today: '2026-02-11',
+      expected: '2026-02-10',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      today: '2026-02-01',
+      expected: '2026-01-31',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      today: '2026-03-02',
+      expected: '2026-02-28',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      today: '2026-03-31',
+      expected: '2026-03-31',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-03-31',
+      today: '2026-04-30',
+      expected: '2026-04-30',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      today: '2026-01-01',
+      expected: '2025-02-28',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      today: '2026-03-02',
+      expected: '2026-02-28',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      today: '2028-01-01',
+      expected: '2027-02-28',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      today: '2028-02-29',
+      expected: '2028-02-29',
+    },
+  ];
+
+  it.each(cases)(
+    'computes the current nominal cycle date for $cadence from $anchor on $today -> $expected',
+    ({ cadence, anchor, today, expected }) => {
+      expect(currentCycleDate(anchor, cadence, today)).toBe(expected);
+    },
+  );
+});
+
+describe('cycleDateAt', () => {
+  const cases: Array<{
+    cadence: CalendarCadence;
+    anchor: string;
+    index: number;
+    expected: string;
+  }> = [
+    {
+      cadence: 'daily',
+      anchor: '2026-01-01',
+      index: 0,
+      expected: '2026-01-01',
+    },
+    {
+      cadence: 'daily',
+      anchor: '2026-01-01',
+      index: 9,
+      expected: '2026-01-10',
+    },
+    {
+      cadence: 'weekly',
+      anchor: '2026-01-01',
+      index: 1,
+      expected: '2026-01-08',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      index: 1,
+      expected: '2026-02-28',
+    },
+    {
+      cadence: 'monthly',
+      anchor: '2026-01-31',
+      index: 3,
+      expected: '2026-04-30',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      index: 1,
+      expected: '2025-02-28',
+    },
+    {
+      cadence: 'annual',
+      anchor: '2024-02-29',
+      index: 4,
+      expected: '2028-02-29',
+    },
+  ];
+
+  it.each(cases)(
+    'computes the nominal cycle $index for $cadence from $anchor -> $expected',
+    ({ cadence, anchor, index, expected }) => {
+      expect(cycleDateAt(anchor, cadence, index)).toBe(expected);
+    },
+  );
+
+  it('rejects a negative cycle index', () => {
+    expect(() => cycleDateAt('2026-01-01', 'monthly', -1)).toThrow(
+      /Invalid cycle index/,
+    );
+  });
+});
+
+describe('isOverdueByTolerance', () => {
+  it('never treats a future or same-day schedule as overdue', () => {
+    expect(isOverdueByTolerance('2026-02-10', '2026-02-10', 15)).toBe(false);
+    expect(isOverdueByTolerance('2026-02-11', '2026-02-10', 15)).toBe(false);
+  });
+
+  it('treats a passed schedule date as overdue beyond the default 15 minutes', () => {
+    expect(isOverdueByTolerance('2026-02-10', '2026-02-11', 15)).toBe(true);
+    expect(isOverdueByTolerance('2026-02-10', '2026-03-02', 15)).toBe(true);
+  });
+
+  it('stays within a tolerance configured larger than a day', () => {
+    expect(isOverdueByTolerance('2026-02-10', '2026-02-11', 1_500)).toBe(false);
+    expect(isOverdueByTolerance('2026-02-10', '2026-02-13', 1_500)).toBe(true);
   });
 });

@@ -112,48 +112,48 @@ Nota: con 5 attempts hay solo 4 esperas (10 s, 20 s, 40 s, 80 s), así que el to
 
 - [x] **T44 — Outbox consultable por API** (§14) · `GET` de eventos de dominio con filtro por tipo y agregado. Depende de: T21, T43. _Hecho cuando:_ el `CancellationEvent` de T43 se recupera por API.
 
-- [ ] **T45 — Operación externa de cobro de ciclo** (RF-04, RF-11, RF-12 · INV-02) · `POST /subscriptions/:id/billing-cycles/:cycle/charge` bajo el Guard: get-or-create de la intent por `(subscription_id, billing_cycle)` y solicitud de ejecución. Si la intent ya existe, devuelve su estado actual. `SETTLED` cuando el attempt deja `IN_FLIGHT` (D2). Depende de: T25, T40. _Hecho cuando:_ dos keys distintas para el mismo ciclo generan una sola intent, y una key expirada crea una nueva operación pero no una segunda intent.
+- [x] **T45 — Operación externa de cobro de ciclo** (RF-04, RF-11, RF-12 · INV-02) · `POST /subscriptions/:id/billing-cycles/:cycle/charge` bajo el Guard: get-or-create de la intent por `(subscription_id, billing_cycle)` y solicitud de ejecución. Si la intent ya existe, devuelve su estado actual. `SETTLED` cuando el attempt deja `IN_FLIGHT` (D2). Depende de: T25, T40. _Hecho cuando:_ dos keys distintas para el mismo ciclo generan una sola intent, y una key expirada crea una nueva operación pero no una segunda intent.
 
 ---
 
 ## Fase 6 — Calendario y scheduling
 
-- [ ] **T46 — Ciclo nominal y próxima facturación unificada** (RF-09, RF-23 · INV-02) · Definir `billing_cycle` como fecha nominal (D4) y hacer que la consulta de T11 use el `CalendarModule`, sin duplicar lógica de fechas. Depende de: T19, T27. _Hecho cuando:_ un test compara la próxima fecha de `GET` con la del `CalendarModule` para mensual, anual y fin de mes.
+- [x] **T46 — Ciclo nominal y próxima facturación unificada** (RF-09, RF-23 · INV-02) · Definir `billing_cycle` como fecha nominal (D4) y hacer que la consulta de T11 use el `CalendarModule`, sin duplicar lógica de fechas. Depende de: T19, T27. _Hecho cuando:_ un test compara la próxima fecha de `GET` con la del `CalendarModule` para mensual, anual y fin de mes.
 
-- [ ] **T47 — Scheduler: crear intents vencidas** (RF-11, RF-23, RF-24, RF-25, RF-30 · INV-02, INV-08, INV-09) · Identifica ciclos cuya hora de procesamiento llegó, aplica fin de mes y luego día hábil (sin mover el ancla) y crea la intent `SCHEDULED` con `next_attempt_at`. Suscripciones no `ACTIVE` no generan intents. Depende de: T40, T46. _Hecho cuando:_ el despacho repetido no crea intents duplicadas, y anclas día 31 y 29-feb anual dan las fechas esperadas.
+- [x] **T47 — Scheduler: crear intents vencidas** (RF-11, RF-23, RF-24, RF-25, RF-30 · INV-02, INV-08, INV-09) · Identifica ciclos cuya hora de procesamiento llegó, aplica fin de mes y luego día hábil (sin mover el ancla) y crea la intent `SCHEDULED` con `next_attempt_at`. Suscripciones no `ACTIVE` no generan intents. Depende de: T40, T46. _Hecho cuando:_ el despacho repetido no crea intents duplicadas, y anclas día 31 y 29-feb anual dan las fechas esperadas.
 
-- [ ] **T48 — Omisión por motor caído** (RF-18, RF-31) · Ciclos vencidos más allá de la tolerancia (D14) se registran `OMITTED(ENGINE_DOWN)`, sin efectos económicos ni catch-up; el siguiente ciclo se calcula desde el ancla. Depende de: T47. _Hecho cuando:_ con el scheduler detenido dos ciclos quedan `OMITTED(ENGINE_DOWN)` y el ciclo siguiente se procesa normalmente.
+- [x] **T48 — Omisión por motor caído** (RF-18, RF-31) · Ciclos vencidos más allá de la tolerancia (D14) se registran `OMITTED(ENGINE_DOWN)`, sin efectos económicos ni catch-up; el siguiente ciclo se calcula desde el ancla. Depende de: T47. _Hecho cuando:_ con el scheduler detenido dos ciclos quedan `OMITTED(ENGINE_DOWN)` y el ciclo siguiente se procesa normalmente.
 
-- [ ] **T49 — No solapamiento de ciclos** (RF-14 · INV-01) · Mientras exista una intent viva (`SCHEDULED`, `IN_FLIGHT`, `RETRY_PENDING`, `UNKNOWN`), no se crea la del ciclo siguiente. Si llega el momento de N+2 y N sigue viva, N+1 queda `OMITTED(OVERLAP)` (D11). Depende de: T39, T47. _Hecho cuando:_ con el ciclo N en `RETRY_PENDING`, N+1 no se crea, y se crea cuando N deja de estar viva dentro de su ventana.
+- [x] **T49 — No solapamiento de ciclos** (RF-14 · INV-01) · Mientras exista una intent viva (`SCHEDULED`, `IN_FLIGHT`, `RETRY_PENDING`, `UNKNOWN`), no se crea la del ciclo siguiente. Si llega el momento de N+2 y N sigue viva, N+1 queda `OMITTED(OVERLAP)` (D11). Depende de: T39, T47. _Hecho cuando:_ con el ciclo N en `RETRY_PENDING`, N+1 no se crea, y se crea cuando N deja de estar viva dentro de su ventana.
 
 ---
 
 ## Fase 7 — Operaciones administrativas
 
-- [ ] **T50 — Admin: Pause** (RF-26 · INV-09) · Mutación con Guard: `ACTIVE → PAUSED`, intents `SCHEDULED`/`RETRY_PENDING` pasan a `OMITTED(SUBSCRIPTION_PAUSED)`, un `IN_FLIGHT` termina y un `UNKNOWN` sigue verificándose sin iniciar cobros nuevos. Depende de: T25, T33, T49. _Hecho cuando:_ en `PAUSED` no se generan intents ni retries, y un attempt en vuelo concluye con su resultado.
+- [x] **T50 — Admin: Pause** (RF-26 · INV-09) · Mutación con Guard: `ACTIVE → PAUSED`, intents `SCHEDULED`/`RETRY_PENDING` pasan a `OMITTED(SUBSCRIPTION_PAUSED)`, un `IN_FLIGHT` termina y un `UNKNOWN` sigue verificándose sin iniciar cobros nuevos. Depende de: T25, T33, T49. _Hecho cuando:_ en `PAUSED` no se generan intents ni retries, y un attempt en vuelo concluye con su resultado.
 
-- [ ] **T51 — Admin: Resume** (RF-27) · Mutación con Guard que solo aplica `PAUSED → ACTIVE`. Sin catch-up: el siguiente cobro es el próximo ciclo de calendario. Depende de: T50. _Hecho cuando:_ tras reanudar no se recuperan fechas perdidas, y resume sobre una suscripción no `PAUSED` devuelve el error definido en T21.
+- [x] **T51 — Admin: Resume** (RF-27) · Mutación con Guard que solo aplica `PAUSED → ACTIVE`. Sin catch-up: el siguiente cobro es el próximo ciclo de calendario. Depende de: T50. _Hecho cuando:_ tras reanudar no se recuperan fechas perdidas, y resume sobre una suscripción no `PAUSED` devuelve el error definido en T21.
 
-- [ ] **T52 — Admin: Cancel (API)** (RF-28) · Mutación con Guard sobre `SubscriptionLifecycle.cancel()` (T33) que emite el `CancellationEvent` en la misma transacción. Depende de: T25, T33, T43. _Hecho cuando:_ repetir la mutación con la misma key no duplica efectos ni eventos, y un attempt `IN_FLIGHT` conserva su resultado.
+- [x] **T52 — Admin: Cancel (API)** (RF-28) · Mutación con Guard sobre `SubscriptionLifecycle.cancel()` (T33) que emite el `CancellationEvent` en la misma transacción. Depende de: T25, T33, T43. _Hecho cuando:_ repetir la mutación con la misma key no duplica efectos ni eventos, y un attempt `IN_FLIGHT` conserva su resultado.
 
-- [ ] **T53 — Reprocess: elegibilidad y verify previo** (RF-29 · INV-07) · Acepta intents `UNKNOWN` y `FAILED_FINAL`. Sobre `UNKNOWN` hace `verify` primero: `UNKNOWN` → rechazo; `SUCCEEDED` → cierra sin cobrar. Rechaza `SUCCEEDED` con el código definido en T21. Depende de: T21, T41. _Hecho cuando:_ reprocess sobre `SUCCEEDED` y sobre `UNKNOWN` no verificable son rechazados sin llamar a `charge`.
+- [x] **T53 — Reprocess: elegibilidad y verify previo** (RF-29 · INV-07) · Acepta intents `UNKNOWN` y `FAILED_FINAL`. Sobre `UNKNOWN` hace `verify` primero: `UNKNOWN` → rechazo; `SUCCEEDED` → cierra sin cobrar. Rechaza `SUCCEEDED` con el código definido en T21. Depende de: T21, T41. _Hecho cuando:_ reprocess sobre `SUCCEEDED` y sobre `UNKNOWN` no verificable son rechazados sin llamar a `charge`.
 
-- [ ] **T54 — Reprocess: ejecución y asentado** (RF-29 · INV-02) · Crea un attempt `MANUAL` sobre la misma intent, sin programar retries automáticos. Asienta la operación cuando el attempt termina (D2). No reactiva una suscripción `CANCELLED`. Depende de: T25, T35, T53. _Hecho cuando:_ un reprocess exitoso sobre `FAILED_FINAL` deja la intent `SUCCEEDED` y la suscripción `CANCELLED`, sin nueva intent.
+- [x] **T54 — Reprocess: ejecución y asentado** (RF-29 · INV-02) · Crea un attempt `MANUAL` sobre la misma intent, sin programar retries automáticos. Asienta la operación cuando el attempt termina (D2). No reactiva una suscripción `CANCELLED`. Depende de: T25, T35, T53. _Hecho cuando:_ un reprocess exitoso sobre `FAILED_FINAL` deja la intent `SUCCEEDED` y la suscripción `CANCELLED`, sin nueva intent.
 
-- [ ] **T55 — Consulta de historial ampliada** (RF-09) · `GET` incluye `omitted_reason`, `trigger` de cada attempt, motivos de fallo y `needs_manual_review`. Depende de: T11, T42. _Hecho cuando:_ el `GET` muestra el historial completo con todos los campos anteriores.
+- [x] **T55 — Consulta de historial ampliada** (RF-09) · `GET` incluye `omitted_reason`, `trigger` de cada attempt, motivos de fallo y `needs_manual_review`. Depende de: T11, T42. _Hecho cuando:_ el `GET` muestra el historial completo con todos los campos anteriores.
 
 ---
 
 ## Fase 8 — E2E y cierre
 
-- [ ] **T56 — e2e idempotencia y concurrencia** (E2E-01..04; RF-01..07) · Requests concurrentes reales contra PG real. E2E-01 se formula como "todas las requests convergen al mismo resultado asentado" (D14). E2E-03 usa el endpoint de T45. Depende de: T32, T45. _Hecho cuando:_ E2E-01..04 pasan en verde.
+- [x] **T56 — e2e idempotencia y concurrencia** (E2E-01..04; RF-01..07) · Requests concurrentes reales contra PG real. E2E-01 se formula como "todas las requests convergen al mismo resultado asentado" (D14). E2E-03 usa el endpoint de T45. Depende de: T32, T45. _Hecho cuando:_ E2E-01..04 pasan en verde.
 
-- [ ] **T57 — e2e cobros, ambiguo y `UNKNOWN`** (E2E-05, E2E-06, E2E-07; RF-15..17) · E2E-05: `TIMEOUT` → `UNKNOWN` → `verify FAILED` → nuevo attempt según backoff. E2E-06 mata el worker y reinicia. Depende de: T37, T42. _Hecho cuando:_ los tres pasan y nunca hay un segundo cobro efectivo.
+- [x] **T57 — e2e cobros, ambiguo y `UNKNOWN`** (E2E-05, E2E-06, E2E-07; RF-15..17) · E2E-05: `TIMEOUT` → `UNKNOWN` → `verify FAILED` → nuevo attempt según backoff. E2E-06 mata el worker y reinicia. Depende de: T37, T42. _Hecho cuando:_ los tres pasan y nunca hay un segundo cobro efectivo.
 
-- [ ] **T58 — e2e retries y agotamiento** (E2E-08, E2E-09; RF-19..22) · Cinco fallos reintentables con delays esperados, `DECLINED` sin retry y evento persistido. Depende de: T43, T44. _Hecho cuando:_ E2E-08 y E2E-09 pasan.
+- [x] **T58 — e2e retries y agotamiento** (E2E-08, E2E-09; RF-19..22) · Cinco fallos reintentables con delays esperados, `DECLINED` sin retry y evento persistido. Depende de: T43, T44. _Hecho cuando:_ E2E-08 y E2E-09 pasan.
 
-- [ ] **T59 — e2e calendario, motor caído y solapamiento** (E2E-10, E2E-15, E2E-16; RF-14, RF-18, RF-23..25, RF-31) · Sin catch-up, con solapamiento bloqueado y fin de mes con día hábil. Depende de: T48, T49. _Hecho cuando:_ E2E-10, E2E-15 y E2E-16 pasan.
+- [x] **T59 — e2e calendario, motor caído y solapamiento** (E2E-10, E2E-15, E2E-16; RF-14, RF-18, RF-23..25, RF-31) · Sin catch-up, con solapamiento bloqueado y fin de mes con día hábil. Depende de: T48, T49. _Hecho cuando:_ E2E-10, E2E-15 y E2E-16 pasan.
 
-- [ ] **T60 — e2e admin y cancelación en vuelo** (E2E-11, E2E-12, E2E-13, E2E-14; RF-26..29) · Pause, resume sin catch-up, cancel durante `IN_FLIGHT` y reprocess sin reactivar. Depende de: T51, T52, T54. _Hecho cuando:_ E2E-11..14 pasan.
+- [x] **T60 — e2e admin y cancelación en vuelo** (E2E-11, E2E-12, E2E-13, E2E-14; RF-26..29) · Pause, resume sin catch-up, cancel durante `IN_FLIGHT` y reprocess sin reactivar. Depende de: T51, T52, T54. _Hecho cuando:_ E2E-11..14 pasan.
 
-- [ ] **T61 — Puertas de calidad** (const. #9, #10, #12; §18) · Cobertura ≥ 90 % por artefacto (Guard ↔ RF-01..07; Executor ↔ RF-12..17, RF-29; Scheduler/Calendar ↔ RF-14, RF-18, RF-23..25, RF-30, RF-31), `pending.txt` de T22 vacío, lint/prettier y revisión final de migraciones (reproducibles desde cero). Depende de: T22, T55, T56..T60. _Hecho cuando:_ el informe ≥ 90 %, cada RF e INV traza a un test y `npm run test`, `test:e2e` y `lint` están en verde.
+- [x] **T61 — Puertas de calidad** (const. #9, #10, #12; §18) · Cobertura ≥ 90 % por artefacto (Guard ↔ RF-01..07; Executor ↔ RF-12..17, RF-29; Scheduler/Calendar ↔ RF-14, RF-18, RF-23..25, RF-30, RF-31), `pending.txt` de T22 vacío, lint/prettier y revisión final de migraciones (reproducibles desde cero). Depende de: T22, T55, T56..T60. _Hecho cuando:_ el informe ≥ 90 %, cada RF e INV traza a un test y `npm run test`, `test:e2e` y `lint` están en verde.

@@ -42,7 +42,7 @@ describe('calendar (e2e)', () => {
     await moduleRef.close();
   });
 
-  it('covers the month end and business day rules end to end', async () => {
+  it('covers the month end and business day rules end to end // T59: @E2E-16 @RF-25', async () => {
     await expect(calendar.resolveScheduledDate(2026, 2, 31)).resolves.toBe(
       '2026-03-02',
     );
@@ -50,7 +50,22 @@ describe('calendar (e2e)', () => {
     await expect(calendar.isBusinessDay('2030-06-10')).resolves.toBe(true);
   });
 
-  it('honours a persisted non-business day', async () => {
+  it('clamps the month end to the last day of each destination month // T59: @E2E-16 @RF-25', async () => {
+    await expect(calendar.resolveScheduledDate(2025, 2, 31)).resolves.toBe(
+      '2025-02-28',
+    );
+    await expect(calendar.resolveScheduledDate(2028, 2, 31)).resolves.toBe(
+      '2028-02-29',
+    );
+    await expect(calendar.resolveScheduledDate(2026, 4, 31)).resolves.toBe(
+      '2026-04-30',
+    );
+    await expect(calendar.resolveScheduledDate(2026, 6, 31)).resolves.toBe(
+      '2026-06-30',
+    );
+  });
+
+  it('honours a persisted non-business day // T59: @RF-24', async () => {
     await declareHoliday(HOLIDAYS[0]);
 
     await expect(calendar.isBusinessDay(HOLIDAYS[0])).resolves.toBe(false);

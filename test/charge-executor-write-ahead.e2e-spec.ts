@@ -125,7 +125,7 @@ describe('charge executor write-ahead (e2e)', () => {
     expect(rows[0].status).toBe('IN_FLIGHT');
   });
 
-  it('keeps the write-ahead durable when a fresh execution sees the crash state', async () => {
+  it('keeps the write-ahead durable when a fresh execution sees the crash state // T61: @RF-13 @INV-04', async () => {
     const subscriptionId = await createSubscription();
     const intentId = await createIntent(subscriptionId);
 
@@ -154,7 +154,7 @@ describe('charge executor write-ahead (e2e)', () => {
     expect(attempts[0].providerOperationId).toBe(started.providerOperationId);
   });
 
-  it('lets only one transaction advance on simultaneous executions over the same intent', async () => {
+  it('lets only one transaction advance on simultaneous executions over the same intent // T61: @RF-13 @INV-03', async () => {
     const subscriptionId = await createSubscription();
     const intentId = await createIntent(subscriptionId);
 

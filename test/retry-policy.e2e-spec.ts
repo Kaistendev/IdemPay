@@ -66,13 +66,24 @@ describe('retry policy (e2e)', () => {
       attemptNo: number;
       status: string;
       errorType: string | null;
+      providerOperationId: string;
     }>(
-      `SELECT auto_seq AS "attemptNo", status, error_type AS "errorType"
+      `SELECT auto_seq AS "attemptNo", status, error_type AS "errorType",
+              provider_operation_id AS "providerOperationId"
        FROM payment_attempts WHERE billing_intent_id = $1
        ORDER BY auto_seq`,
       [intentId],
     );
     return rows;
+  };
+
+  const countIdempotencyOps = async (intentId: string): Promise<number> => {
+    const { rows } = await pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM idempotency_operations
+       WHERE billing_intent_id = $1`,
+      [intentId],
+    );
+    return rows[0].count;
   };
 
   const intentCount = async (subscriptionId: string): Promise<number> => {
@@ -118,7 +129,7 @@ describe('retry policy (e2e)', () => {
       await app.close();
     });
 
-    it('retries four times with backoff and finishes FAILED_FINAL on the fifth', async () => {
+    it('retries four times with backoff and finishes FAILED_FINAL on the fifth // T58: @E2E-08 @RF-19 @RF-21', async () => {
       const subscriptionId = await createSubscription();
       const intentId = await createIntent(subscriptionId);
 
@@ -180,6 +191,15 @@ describe('retry policy (e2e)', () => {
         });
       }
 
+      expect(attempts.map((attempt) => attempt.providerOperationId)).toEqual([
+        `${intentId}:1`,
+        `${intentId}:2`,
+        `${intentId}:3`,
+        `${intentId}:4`,
+        `${intentId}:5`,
+      ]);
+      expect(await countIdempotencyOps(intentId)).toBe(0);
+
       const afterFinal = await executor.execute(intentId);
       expect(afterFinal).toMatchObject({
         outcome: 'NOT_STARTED',
@@ -204,7 +224,7 @@ describe('retry policy (e2e)', () => {
       await app.close();
     });
 
-    it('finishes FAILED_FINAL on the first attempt without scheduling a retry', async () => {
+    it('finishes FAILED_FINAL on the first attempt without scheduling a retry // T58: @E2E-09 @RF-20 @RF-21', async () => {
       const subscriptionId = await createSubscription();
       const intentId = await createIntent(subscriptionId);
 
@@ -229,6 +249,8 @@ describe('retry policy (e2e)', () => {
         status: 'FAILED',
         errorType: 'DECLINED',
       });
+      expect(attempts[0].providerOperationId).toBe(`${intentId}:1`);
+      expect(await countIdempotencyOps(intentId)).toBe(0);
 
       const second = await executor.execute(intentId);
       expect(second).toMatchObject({

@@ -124,6 +124,14 @@ export class IdempotencyGuard implements CanActivate {
     if (/^\/subscriptions\/[^/]+\/reprocess$/.test(path)) {
       return 'BILLING_INTENT_REPROCESS';
     }
+    if (
+      /^\/subscriptions\/[^/]+\/billing-cycles\/[^/]+\/reprocess$/.test(path)
+    ) {
+      return 'BILLING_INTENT_REPROCESS';
+    }
+    if (/^\/subscriptions\/[^/]+\/billing-cycles\/[^/]+\/charge$/.test(path)) {
+      return 'BILLING_CYCLE_CHARGE';
+    }
     if (/^\/charges$/.test(path)) {
       return 'BILLING_CYCLE_CHARGE';
     }

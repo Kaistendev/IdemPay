@@ -20,11 +20,14 @@ interface FakeRow {
 
 class FakeRepository {
   private readonly rows = new Map<string, FakeRow>();
+  private readonly operationTypes = new Map<string, string>();
 
   registerOrGet(
     key: string,
     payloadHash: string,
+    operationType = 'SUBSCRIPTION_CREATE',
   ): Promise<IdempotencyRegistration> {
+    this.operationTypes.set(key, operationType);
     const existing = this.rows.get(key);
     if (!existing) {
       this.rows.set(key, {
@@ -73,13 +76,19 @@ class FakeRepository {
   read(key: string): Promise<FakeRow | null> {
     return Promise.resolve(this.rows.get(key) ?? null);
   }
+
+  operationTypeFor(key: string): string | undefined {
+    return this.operationTypes.get(key);
+  }
 }
 
 function buildRequest(
   headers: Record<string, unknown>,
   body: unknown,
+  method = '',
+  path = '',
 ): IdempotencyRequest {
-  return { headers, body } as unknown as IdempotencyRequest;
+  return { headers, body, method, path } as unknown as IdempotencyRequest;
 }
 
 function buildContext(
@@ -127,7 +136,7 @@ describe('IdempotencyGuard', () => {
     );
   });
 
-  it('accepts a keyed request and registers it as PROCESSING', async () => {
+  it('accepts a keyed request and registers it as PROCESSING // T61: @INV-05', async () => {
     const request = buildRequest({ 'idempotency-key': key }, body);
 
     await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
@@ -228,7 +237,7 @@ describe('IdempotencyGuard', () => {
     expect(headers.get('Retry-After')).toBe('300');
   });
 
-  it('exposes the settled response for a duplicate payload', async () => {
+  it('exposes the settled response for a duplicate payload // T61: @INV-06', async () => {
     await guard.canActivate(
       buildContext(buildRequest({ 'idempotency-key': key }, body)),
     );
@@ -274,6 +283,110 @@ describe('IdempotencyGuard', () => {
       statusCode: 201,
       body: { id: 'bi-1' },
     });
+  });
+
+  it('maps the pause route to SUBSCRIPTION_PAUSE', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/subscriptions/sub-1/pause',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('SUBSCRIPTION_PAUSE');
+  });
+
+  it('maps the resume route to SUBSCRIPTION_RESUME', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/subscriptions/sub-1/resume',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('SUBSCRIPTION_RESUME');
+  });
+
+  it('maps the cancel route to SUBSCRIPTION_CANCEL', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/subscriptions/sub-1/cancel',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('SUBSCRIPTION_CANCEL');
+  });
+
+  it('maps the subscription reprocess route to BILLING_INTENT_REPROCESS', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/subscriptions/sub-1/reprocess',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('BILLING_INTENT_REPROCESS');
+  });
+
+  it('maps the one-off charges route to BILLING_CYCLE_CHARGE', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/charges',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('BILLING_CYCLE_CHARGE');
+  });
+
+  it('falls back to SUBSCRIPTION_CREATE for non-POST requests', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'GET',
+      '/subscriptions',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('SUBSCRIPTION_CREATE');
+  });
+
+  it('maps the billing cycle charge route to BILLING_CYCLE_CHARGE', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/subscriptions/sub-1/billing-cycles/2026-09-10/charge',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('BILLING_CYCLE_CHARGE');
+  });
+
+  it('maps the billing cycle reprocess route to BILLING_INTENT_REPROCESS', async () => {
+    const request = buildRequest(
+      { 'idempotency-key': key },
+      {},
+      'POST',
+      '/subscriptions/sub-1/billing-cycles/2026-09-10/reprocess',
+    );
+
+    await expect(guard.canActivate(buildContext(request))).resolves.toBe(true);
+
+    expect(repository.operationTypeFor(key)).toBe('BILLING_INTENT_REPROCESS');
   });
 
   it('compares keys exactly', async () => {

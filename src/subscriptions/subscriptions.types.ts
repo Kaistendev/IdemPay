@@ -65,17 +65,20 @@ export interface BillingIntentHistoryRecord {
   status: BillingIntentStatus;
   settledAt: Date | null;
   createdAt: Date;
+  omittedReason: string | null;
+  needsManualReview: boolean;
 }
 
 export interface PaymentAttemptHistoryRecord {
   id: string;
   billingIntentId: string;
-  attemptNo: number;
+  attemptNo: number | null;
   providerOperationId: string;
   status: PaymentAttemptStatus;
   errorType: string | null;
   startedAt: Date;
   finishedAt: Date | null;
+  trigger: 'AUTO' | 'MANUAL';
 }
 
 export interface SubscriptionHistory {
@@ -90,12 +93,13 @@ export interface SubscriptionQueriesPort {
 
 export interface PaymentAttemptHistoryResponse {
   id: string;
-  attemptNo: number;
+  attemptNo: number | null;
   providerOperationId: string;
   status: PaymentAttemptStatus;
   errorType: string | null;
   startedAt: string;
   finishedAt: string | null;
+  trigger: 'AUTO' | 'MANUAL';
 }
 
 export interface BillingIntentHistoryResponse {
@@ -107,6 +111,8 @@ export interface BillingIntentHistoryResponse {
   status: BillingIntentStatus;
   settledAt: string | null;
   createdAt: string;
+  omittedReason: string | null;
+  needsManualReview: boolean;
   attempts: PaymentAttemptHistoryResponse[];
 }
 
@@ -131,6 +137,17 @@ export interface SubscriptionCancellationResult {
   omittedIntents: number;
 }
 
+export interface SubscriptionPauseResult {
+  id: string;
+  status: 'PAUSED';
+  omittedIntents: number;
+}
+
+export interface SubscriptionResumeResult {
+  id: string;
+  status: 'ACTIVE';
+}
+
 export interface BillingIntentLiveRecord {
   id: string;
   status: BillingIntentStatus;
@@ -143,10 +160,15 @@ export interface SubscriptionLifecycleSnapshot {
   liveIntents: BillingIntentLiveRecord[];
 }
 
-export interface SubscriptionCancellationPort {
+export interface SubscriptionLifecyclePort {
   load(id: string): Promise<SubscriptionLifecycleSnapshot | null>;
   applyCancellation(
     id: string,
     omittedIntentIds: readonly string[],
   ): Promise<{ cancelledAt: Date; omittedCount: number } | null>;
+  applyPause(
+    id: string,
+    omittedIntentIds: readonly string[],
+  ): Promise<{ omittedCount: number } | null>;
+  applyResume(id: string): Promise<{ id: string } | null>;
 }

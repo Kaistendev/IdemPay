@@ -33,7 +33,9 @@ SELECT
   currency,
   status,
   settled_at AS "settledAt",
-  created_at AS "createdAt"
+  created_at AS "createdAt",
+  omitted_reason AS "omittedReason",
+  needs_manual_review AS "needsManualReview"
 FROM billing_intents
 WHERE subscription_id = $1
 ORDER BY billing_cycle ASC, created_at ASC
@@ -48,10 +50,11 @@ SELECT
   status,
   error_type AS "errorType",
   started_at AS "startedAt",
-  finished_at AS "finishedAt"
+  finished_at AS "finishedAt",
+  trigger
 FROM payment_attempts
 WHERE billing_intent_id = ANY($1::uuid[])
-ORDER BY billing_intent_id ASC, auto_seq ASC NULLS LAST
+ORDER BY billing_intent_id ASC, auto_seq ASC NULLS LAST, started_at ASC
 `;
 
 @Injectable()

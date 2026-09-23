@@ -31,6 +31,7 @@ export const SUBSCRIPTION_STATES: readonly SubscriptionStatus[] = [
  * Transiciones permitidas de Billing Intent (§5.1 spec).
  * `SUCCEEDED` no admite salida (INV-07); `FAILED_FINAL`, `RETRY_PENDING`
  * y `OMITTED` solo admiten las salidas listadas.
+ * El reprocess (RF-29) reabre una intent terminal hacia `IN_FLIGHT`.
  */
 export const ALLOWED_BILLING_INTENT_TRANSITIONS: ReadonlyArray<
   readonly [BillingIntentStatus, BillingIntentStatus]
@@ -43,9 +44,11 @@ export const ALLOWED_BILLING_INTENT_TRANSITIONS: ReadonlyArray<
   ['IN_FLIGHT', 'RETRY_PENDING'],
   ['RETRY_PENDING', 'IN_FLIGHT'],
   ['RETRY_PENDING', 'OMITTED'],
+  ['UNKNOWN', 'IN_FLIGHT'],
   ['UNKNOWN', 'SUCCEEDED'],
   ['UNKNOWN', 'RETRY_PENDING'],
   ['UNKNOWN', 'OMITTED'],
+  ['FAILED_FINAL', 'IN_FLIGHT'],
 ];
 
 /**

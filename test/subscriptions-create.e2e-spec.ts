@@ -86,7 +86,7 @@ describe('subscriptions create (e2e)', () => {
     await app.close();
   });
 
-  it('creates an ACTIVE subscription and persists it', async () => {
+  it('creates an ACTIVE subscription and persists it // T61: @RF-08', async () => {
     const body = validBody();
     const response = await post(nextKey(), body);
 
@@ -178,7 +178,7 @@ describe('subscriptions create (e2e)', () => {
     expect(response.text).toContain('"path":"currency"');
   });
 
-  it('rejects an unknown frequency with 400', async () => {
+  it('rejects an unknown frequency with 400 // T61: @RF-08', async () => {
     const response = await post(nextKey(), {
       ...validBody(),
       frequency: 'hourly',

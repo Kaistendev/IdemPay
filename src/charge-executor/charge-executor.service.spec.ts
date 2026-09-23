@@ -156,7 +156,7 @@ describe('ChargeExecutorService', () => {
     ]);
   });
 
-  it('settles FAILED_FINAL on the fifth retryable failure', async () => {
+  it('settles FAILED_FINAL on the fifth retryable failure // T61: @INV-10', async () => {
     const { service, executor } = serviceFor(
       { ...STARTED, attemptNo: 5 },
       'PROVIDER_ERROR',

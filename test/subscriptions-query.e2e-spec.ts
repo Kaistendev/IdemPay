@@ -8,12 +8,13 @@ import { PG_POOL } from '../src/health/health.constants';
 
 interface PaymentAttemptResponse {
   id: string;
-  attemptNo: number;
+  attemptNo: number | null;
   providerOperationId: string;
   status: string;
   errorType: string | null;
   startedAt: string;
   finishedAt: string | null;
+  trigger: string;
 }
 
 interface BillingIntentResponse {
@@ -25,6 +26,8 @@ interface BillingIntentResponse {
   status: string;
   settledAt: string | null;
   createdAt: string;
+  omittedReason: string | null;
+  needsManualReview: boolean;
   attempts: PaymentAttemptResponse[];
 }
 
@@ -81,33 +84,45 @@ describe('subscriptions query (e2e)', () => {
     cycle: string,
     status: string,
     settledAt: string | null,
+    omittedReason: string | null = null,
+    needsManualReview = false,
   ): Promise<string> => {
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO billing_intents
          (subscription_id, billing_cycle, schedule_date, amount, currency,
-          status, settled_at)
-       VALUES ($1, $2, $3::date, 100, 'USD', $4, $5)
+          status, settled_at, omitted_reason, needs_manual_review)
+       VALUES ($1, $2, $3::date, 100, 'USD', $4, $5, $6, $7)
        RETURNING id`,
-      [subscriptionId, cycle, cycle, status, settledAt],
+      [
+        subscriptionId,
+        cycle,
+        cycle,
+        status,
+        settledAt,
+        omittedReason,
+        needsManualReview,
+      ],
     );
     return rows[0].id;
   };
 
   const createAttempt = async (
     intentId: string,
-    attemptNo: number,
+    attemptNo: number | null,
     status: string,
     errorType: string | null,
     finishedAt: string | null,
+    trigger = 'AUTO',
   ): Promise<string> => {
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO payment_attempts
          (billing_intent_id, trigger, auto_seq, provider_operation_id, status,
           error_type, finished_at)
-       VALUES ($1, 'AUTO', $2, $3, $4, $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
       [
         intentId,
+        trigger,
         attemptNo,
         nextProviderOperation(),
         status,
@@ -235,6 +250,96 @@ describe('subscriptions query (e2e)', () => {
     expect(failure.attempts.map((attempt) => attempt.errorType)).toEqual([
       'DECLINED',
       'PROVIDER_ERROR',
+    ]);
+  });
+
+  it('surfaces omitted_reason, attempt trigger, failure reasons and needs_manual_review // T55: @RF-09', async () => {
+    const subscriptionId = await createSubscription();
+
+    await createIntent(
+      subscriptionId,
+      '2026-03-10',
+      'OMITTED',
+      '2026-03-10T12:00:00Z',
+      'OVERLAP',
+    );
+    const unknownIntent = await createIntent(
+      subscriptionId,
+      '2026-04-10',
+      'UNKNOWN',
+      null,
+      null,
+      true,
+    );
+    await createAttempt(
+      unknownIntent,
+      1,
+      'UNKNOWN',
+      'TIMEOUT',
+      '2026-04-10T12:00:05Z',
+    );
+    const failedIntent = await createIntent(
+      subscriptionId,
+      '2026-05-10',
+      'FAILED_FINAL',
+      '2026-05-12T12:00:00Z',
+    );
+    await createAttempt(
+      failedIntent,
+      1,
+      'FAILED',
+      'DECLINED',
+      '2026-05-10T12:00:05Z',
+    );
+    await createAttempt(
+      failedIntent,
+      null,
+      'FAILED',
+      'DECLINED',
+      '2026-05-11T12:00:05Z',
+      'MANUAL',
+    );
+
+    const response = await request(app.getHttpServer()).get(
+      `/subscriptions/${subscriptionId}`,
+    );
+
+    expect(response.status).toBe(200);
+    const body = response.body as SubscriptionDetailResponse;
+    expect(body.billingIntents).toHaveLength(3);
+
+    const omitted = body.billingIntents.find(
+      (intent) => intent.status === 'OMITTED',
+    );
+    expect(omitted).toMatchObject({
+      omittedReason: 'OVERLAP',
+      needsManualReview: false,
+    });
+
+    const unknown = body.billingIntents.find(
+      (intent) => intent.status === 'UNKNOWN',
+    );
+    expect(unknown).toMatchObject({
+      omittedReason: null,
+      needsManualReview: true,
+    });
+    expect(unknown?.attempts[0]).toMatchObject({
+      trigger: 'AUTO',
+      errorType: 'TIMEOUT',
+    });
+
+    const failed = body.billingIntents.find(
+      (intent) => intent.status === 'FAILED_FINAL',
+    );
+    expect(failed?.attempts.map((attempt) => attempt.trigger)).toEqual([
+      'AUTO',
+      'MANUAL',
+    ]);
+    expect(failed?.attempts[0]).toMatchObject({ attemptNo: 1 });
+    expect(failed?.attempts[1]).toMatchObject({ attemptNo: null });
+    expect(failed?.attempts.map((attempt) => attempt.errorType)).toEqual([
+      'DECLINED',
+      'DECLINED',
     ]);
   });
 

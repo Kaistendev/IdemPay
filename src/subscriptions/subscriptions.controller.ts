@@ -32,7 +32,7 @@ export class SubscriptionsController {
   constructor(
     private readonly subscriptions: SubscriptionsService,
     private readonly queries: SubscriptionsQueryService,
-    private readonly cancellations: SubscriptionLifecycleService,
+    private readonly lifecycle: SubscriptionLifecycleService,
   ) {}
 
   @Post()
@@ -61,7 +61,31 @@ export class SubscriptionsController {
     @Param(new ZodValidationPipe(subscriptionParamsSchema))
     params: SubscriptionParams,
   ): Promise<SubscriptionDetailResponse> {
-    await this.cancellations.cancel(params.id);
+    await this.lifecycle.cancel(params.id);
+    return this.queries.findById(params.id);
+  }
+
+  @Post(':id/pause')
+  @HttpCode(200)
+  @UseGuards(IdempotencyGuard)
+  @UseInterceptors(IdempotencySettlementInterceptor)
+  async pause(
+    @Param(new ZodValidationPipe(subscriptionParamsSchema))
+    params: SubscriptionParams,
+  ): Promise<SubscriptionDetailResponse> {
+    await this.lifecycle.pause(params.id);
+    return this.queries.findById(params.id);
+  }
+
+  @Post(':id/resume')
+  @HttpCode(200)
+  @UseGuards(IdempotencyGuard)
+  @UseInterceptors(IdempotencySettlementInterceptor)
+  async resume(
+    @Param(new ZodValidationPipe(subscriptionParamsSchema))
+    params: SubscriptionParams,
+  ): Promise<SubscriptionDetailResponse> {
+    await this.lifecycle.resume(params.id);
     return this.queries.findById(params.id);
   }
 }

@@ -146,7 +146,7 @@ describe('exhaustion cancels the subscription and emits the event (e2e)', () => 
     await app.close();
   });
 
-  it('cancels the subscription and persists one CancellationEvent after exhausting five attempts', async () => {
+  it('cancels the subscription and persists one CancellationEvent after exhausting five attempts // T58: @E2E-08 @RF-22', async () => {
     const subscriptionId = await createSubscription();
     const intentId = await createIntent(subscriptionId);
 
@@ -292,7 +292,7 @@ describe('exhaustion on a non-retryable failure (e2e)', () => {
     await app.close();
   });
 
-  it('cancels the subscription and emits the event on the first non-retryable failure', async () => {
+  it('cancels the subscription and emits the event on the first non-retryable failure // T58: @E2E-09 @RF-22', async () => {
     const subscriptionId = await createSubscription();
     const intentId = await createIntent(subscriptionId);
 

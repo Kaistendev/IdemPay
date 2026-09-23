@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { PG_POOL } from '../health/health.constants';
 import type {
   BillingIntentLiveRecord,
-  SubscriptionCancellationPort,
+  SubscriptionLifecyclePort,
   SubscriptionLifecycleSnapshot,
   SubscriptionStatus,
 } from './subscriptions.types';
@@ -29,17 +29,36 @@ WHERE id = $1
 RETURNING cancelled_at AS "cancelledAt"
 `;
 
+const APPLY_PAUSE = `
+UPDATE subscriptions
+SET status = 'PAUSED'
+WHERE id = $1
+RETURNING id
+`;
+
+const APPLY_RESUME = `
+UPDATE subscriptions
+SET status = 'ACTIVE'
+WHERE id = $1
+RETURNING id
+`;
+
 const OMIT_INTENTS = `
 UPDATE billing_intents
 SET status = 'OMITTED',
-    omitted_reason = 'SUBSCRIPTION_CANCELLED',
+    omitted_reason = $2::text,
     settled_at = now()
 WHERE id = ANY($1::uuid[])
   AND status IN ('SCHEDULED', 'RETRY_PENDING')
 `;
 
+const APPEND_CANCELLATION_EVENT = `
+INSERT INTO notifications (type, aggregate_id, payload)
+VALUES ('CancellationEvent', $1, $2)
+`;
+
 @Injectable()
-export class SubscriptionCancellationRepository implements SubscriptionCancellationPort {
+export class SubscriptionCancellationRepository implements SubscriptionLifecyclePort {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   async load(id: string): Promise<SubscriptionLifecycleSnapshot | null> {
@@ -89,7 +108,15 @@ export class SubscriptionCancellationRepository implements SubscriptionCancellat
       const omitted =
         omittedIntentIds.length === 0
           ? { rowCount: 0 }
-          : await client.query(OMIT_INTENTS, [omittedIntentIds]);
+          : await client.query(OMIT_INTENTS, [
+              omittedIntentIds,
+              'SUBSCRIPTION_CANCELLED',
+            ]);
+
+      await client.query(APPEND_CANCELLATION_EVENT, [
+        id,
+        { subscriptionId: id, reason: 'ADMIN' },
+      ]);
 
       await client.query('COMMIT');
 
@@ -97,6 +124,65 @@ export class SubscriptionCancellationRepository implements SubscriptionCancellat
         cancelledAt: cancelled.rows[0].cancelledAt,
         omittedCount: omitted.rowCount ?? 0,
       };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async applyPause(
+    id: string,
+    omittedIntentIds: readonly string[],
+  ): Promise<{ omittedCount: number } | null> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const paused = await client.query<{ id: string }>(APPLY_PAUSE, [id]);
+
+      if (paused.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      const omitted =
+        omittedIntentIds.length === 0
+          ? { rowCount: 0 }
+          : await client.query(OMIT_INTENTS, [
+              omittedIntentIds,
+              'SUBSCRIPTION_PAUSED',
+            ]);
+
+      await client.query('COMMIT');
+
+      return { omittedCount: omitted.rowCount ?? 0 };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async applyResume(id: string): Promise<{ id: string } | null> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const resumed = await client.query<{ id: string }>(APPLY_RESUME, [id]);
+
+      if (resumed.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      await client.query('COMMIT');
+
+      return { id: resumed.rows[0].id };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

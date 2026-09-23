@@ -1,4 +1,8 @@
-import type { CalendarConfig, Weekday } from './calendar.types';
+import type {
+  CalendarCadence,
+  CalendarConfig,
+  Weekday,
+} from './calendar.types';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -110,4 +114,155 @@ export function resolveScheduledDate(
     config,
     holidays,
   );
+}
+
+export function nextCycleDate(
+  anchorDate: string,
+  cadence: CalendarCadence,
+  today: string,
+): string {
+  const anchor = parseCalendarDate(anchorDate);
+  const todayDate = parseCalendarDate(today);
+  const anchorMilliseconds = Date.UTC(
+    anchor.year,
+    anchor.month - 1,
+    anchor.day,
+  );
+  const todayMilliseconds = Date.UTC(
+    todayDate.year,
+    todayDate.month - 1,
+    todayDate.day,
+  );
+
+  if (todayMilliseconds <= anchorMilliseconds) {
+    return anchorDate;
+  }
+
+  if (cadence === 'daily' || cadence === 'weekly') {
+    const stepDays = cadence === 'daily' ? 1 : 7;
+    const periods = Math.ceil(
+      (todayMilliseconds - anchorMilliseconds) /
+        (stepDays * MILLISECONDS_PER_DAY),
+    );
+    return addCalendarDays(anchorDate, stepDays * periods);
+  }
+
+  const stepMonths = cadence === 'annual' ? 12 : 1;
+  let year = anchor.year;
+  let month = anchor.month;
+
+  for (;;) {
+    const candidateDate = parseCalendarDate(
+      truncateToMonthEnd(year, month, anchor.day),
+    );
+    const candidateMilliseconds = Date.UTC(
+      candidateDate.year,
+      candidateDate.month - 1,
+      candidateDate.day,
+    );
+    if (candidateMilliseconds >= todayMilliseconds) {
+      return formatCalendarDate(candidateDate);
+    }
+
+    month += stepMonths;
+    year += Math.floor((month - 1) / 12);
+    month = ((month - 1) % 12) + 1;
+  }
+}
+
+export function currentCycleDate(
+  anchorDate: string,
+  cadence: CalendarCadence,
+  today: string,
+): string | null {
+  const anchor = parseCalendarDate(anchorDate);
+  const todayDate = parseCalendarDate(today);
+  const anchorMilliseconds = Date.UTC(
+    anchor.year,
+    anchor.month - 1,
+    anchor.day,
+  );
+  const todayMilliseconds = Date.UTC(
+    todayDate.year,
+    todayDate.month - 1,
+    todayDate.day,
+  );
+
+  if (todayMilliseconds < anchorMilliseconds) {
+    return null;
+  }
+
+  if (cadence === 'daily' || cadence === 'weekly') {
+    const stepDays = cadence === 'daily' ? 1 : 7;
+    const periods = Math.floor(
+      (todayMilliseconds - anchorMilliseconds) /
+        (stepDays * MILLISECONDS_PER_DAY),
+    );
+    return addCalendarDays(anchorDate, stepDays * periods);
+  }
+
+  const stepMonths = cadence === 'annual' ? 12 : 1;
+  let year = anchor.year;
+  let month = anchor.month;
+  let latest: CalendarDate | null = null;
+
+  for (;;) {
+    const candidateDate = parseCalendarDate(
+      truncateToMonthEnd(year, month, anchor.day),
+    );
+    const candidateMilliseconds = Date.UTC(
+      candidateDate.year,
+      candidateDate.month - 1,
+      candidateDate.day,
+    );
+    if (candidateMilliseconds > todayMilliseconds) {
+      break;
+    }
+    latest = candidateDate;
+    month += stepMonths;
+    year += Math.floor((month - 1) / 12);
+    month = ((month - 1) % 12) + 1;
+  }
+
+  return latest ? formatCalendarDate(latest) : null;
+}
+
+export function cycleDateAt(
+  anchorDate: string,
+  cadence: CalendarCadence,
+  index: number,
+): string {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error(`Invalid cycle index: ${index}`);
+  }
+
+  if (cadence === 'daily' || cadence === 'weekly') {
+    const stepDays = cadence === 'daily' ? 1 : 7;
+    return addCalendarDays(anchorDate, stepDays * index);
+  }
+
+  const anchor = parseCalendarDate(anchorDate);
+  const stepMonths = cadence === 'annual' ? 12 : 1;
+  const monthsAhead = index * stepMonths;
+  const year = anchor.year + Math.floor((anchor.month - 1 + monthsAhead) / 12);
+  const month = ((anchor.month - 1 + monthsAhead) % 12) + 1;
+  return truncateToMonthEnd(year, month, anchor.day);
+}
+
+export function isOverdueByTolerance(
+  scheduleDate: string,
+  today: string,
+  toleranceMinutes: number,
+): boolean {
+  const schedule = parseCalendarDate(scheduleDate);
+  const todayDate = parseCalendarDate(today);
+  const lateDays =
+    (Date.UTC(todayDate.year, todayDate.month - 1, todayDate.day) -
+      Date.UTC(schedule.year, schedule.month - 1, schedule.day)) /
+    MILLISECONDS_PER_DAY;
+
+  if (lateDays <= 0) {
+    return false;
+  }
+  return lateDays * MILLISECONDS_PER_DAY > toleranceMinutes * 60_000;
 }
